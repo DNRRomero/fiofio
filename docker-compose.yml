@@ -3,8 +3,11 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: alerts
-      POSTGRES_USER: alerts
-      POSTGRES_PASSWORD: alerts
+      POSTGRES_USER_FILE: /run/secrets/postgres_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_user
+      - postgres_password
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -29,10 +32,14 @@ services:
     build:
       context: ./externalMock
       dockerfile: .docker/Dockerfile
+    command: >
+      sh -c "export ACCEPTED_TOKEN=$(cat /run/secrets/external_mock_token) &&
+      exec uvicorn main:app --host 0.0.0.0 --port 8000"
     environment:
       RNG_SEED: "42"
       FORCE_ERROR: "false"
-      ACCEPTED_TOKEN: ${EXTERNAL_MOCK_TOKEN}
+    secrets:
+      - external_mock_token
     healthcheck:
       test:
         [
@@ -56,12 +63,15 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
       RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: http://external-mock:8000
-      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
       SYNC_FREQUENCY_MINUTES: "15"
       SERVICE_HOST: http://localhost:8000
+    secrets:
+      - source: collector_database_url
+        target: DATABASE_URL
+      - source: external_mock_token
+        target: EXTERNAL_SERVICE_TOKEN
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,12 +108,15 @@ services:
       ]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
       RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: http://external-mock:8000
-      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
       SYNC_FREQUENCY_MINUTES: "15"
       SERVICE_HOST: http://alert-collector-api:8000
+    secrets:
+      - source: collector_database_url
+        target: DATABASE_URL
+      - source: external_mock_token
+        target: EXTERNAL_SERVICE_TOKEN
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,12 +142,15 @@ services:
       ]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
       RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: http://external-mock:8000
-      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
       SYNC_FREQUENCY_MINUTES: "15"
       SERVICE_HOST: http://alert-collector-api:8000
+    secrets:
+      - source: collector_database_url
+        target: DATABASE_URL
+      - source: external_mock_token
+        target: EXTERNAL_SERVICE_TOKEN
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,3 +166,13 @@ networks:
 
 volumes:
   postgres-data:
+
+secrets:
+  postgres_user:
+    file: ./secrets/postgres_user
+  postgres_password:
+    file: ./secrets/postgres_password
+  external_mock_token:
+    file: ./secrets/external_mock_token
+  collector_database_url:
+    file: ./secrets/collector_database_url

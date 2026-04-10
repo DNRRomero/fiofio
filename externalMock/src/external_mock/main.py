@@ -7,9 +7,11 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from .domain import AlertsEnvelope
 from .generate import generate_alerts
 from .validate import parse_source_filter, resolve_window
+import structlog
 
 app = FastAPI(title="External Mock Alerts Service")
 
+logger = structlog.get_logger()
 
 def parse_bool_env(name: str) -> bool:
     value = os.getenv(name)
@@ -49,10 +51,12 @@ def get_alerts(
     since_dt, up_to_dt = resolve_window(since, up_to)
 
     if parse_bool_env("FORCE_ERROR"):
+        logger.error("Forced internal server error")
         raise HTTPException(status_code=500, detail="Forced internal server error")
 
     rng = get_rng()
     if rng.random() < 0.2:
+        logger.info("Random internal server error")
         raise HTTPException(status_code=500, detail="Internal server error")
 
     alerts = generate_alerts(rng, since_dt, up_to_dt)

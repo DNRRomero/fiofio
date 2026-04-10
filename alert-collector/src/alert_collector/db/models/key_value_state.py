@@ -7,8 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from alert_collector.db.base import Base
 
-ALERTS_SINCE_CHECKPOINT_KEY = "alerts_since"
-
 
 class KeyValueState(Base):
     """Simple key-value table for checkpoints and lightweight state."""

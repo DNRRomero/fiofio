@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from alert_collector.db.models import (
-    ALERTS_SINCE_CHECKPOINT_KEY,
+    ALERTS_SINCE_KEY,
     Alert,
     KeyValueState,
     WorkerExecution,
@@ -22,8 +22,13 @@ from alert_collector.external_client.client import (
     ExternalClientError,
 )
 from alert_collector.metrics import track_external_alerts_call_duration
-from alert_collector.settings import SyncSettings, get_sync_settings
+from alert_collector.settings import SyncSettings
 from alert_collector.sync.locking import acquire_transaction_lock
+import structlog
+
+ALERTS_SINCE_KEY = "alerts_since"
+
+logger = structlog.get_logger()
 
 
 def _utc_now() -> datetime:
@@ -68,12 +73,13 @@ class SyncService:
         self,
         *,
         session_factory: sessionmaker[Session] | None = None,
-        external_client: ExternalAlertsClient | None = None,
-        settings: SyncSettings | None = None,
+        external_client: ExternalAlertsClient,
+        settings: SyncSettings,
     ) -> None:
         self._session_factory = session_factory or get_session_factory()
-        self._external_client = external_client or ExternalAlertsClient()
-        self._settings = settings or get_sync_settings()
+        self._external_client = external_client
+        self._settings = settings
+
 
     def sync_alerts(
         self,
@@ -86,73 +92,70 @@ class SyncService:
         """Run one sync attempt and commit all related changes atomically."""
         run_id = sync_run_id or uuid4()
         started_at = _utc_now()
+        logger.info("Starting sync attempt", sync_run_id=run_id, started_at=started_at)
         pending_error: Exception | None = None
         result: SyncResult | None = None
 
-        with self._session_factory() as session:
-            with session.begin():
-                acquire_transaction_lock(session, lock_name=lock_name)
-                attempt = attempt_number or self._next_attempt_number(session, run_id)
-                retries = (
-                    retry_count if retry_count is not None else max(attempt - 1, 0)
+        with self._session_factory() as session, session.begin():
+            acquire_transaction_lock(session, lock_name=lock_name)
+            logger.info("Acquired transaction lock", sync_run_id=run_id)
+            attempt = attempt_number or self._next_attempt_number(session, run_id)
+            retries = retry_count if retry_count is not None else max(attempt - 1, 0)
+
+            since = self._resolve_since_checkpoint(session, reference_time=started_at)
+            up_to = _utc_now()
+
+            try:
+                with track_external_alerts_call_duration():
+                    external_alerts = self._external_client.get_alerts(
+                        since=since, up_to=up_to
+                    )
+                enriched_alerts = [enrich_alert(alert) for alert in external_alerts]
+                self._upsert_alerts(session, enriched_alerts)
+                checkpoint_updated = self._update_checkpoint_monotonic(
+                    session, up_to=up_to
                 )
 
-                since = self._resolve_since_checkpoint(
-                    session, reference_time=started_at
+                finished_at = _utc_now()
+                summary = {
+                    "alerts_received": len(external_alerts),
+                    "alerts_persisted": len(enriched_alerts),
+                    "checkpoint": _serialize_checkpoint(up_to),
+                    "checkpoint_updated": checkpoint_updated,
+                }
+                self._insert_execution(
+                    session=session,
+                    sync_run_id=run_id,
+                    attempt_number=attempt,
+                    retry_count=retries,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    success=True,
+                    summary=summary,
                 )
-                up_to = _utc_now()
-
-                try:
-                    with track_external_alerts_call_duration():
-                        external_alerts = self._external_client.get_alerts(
-                            since=since, up_to=up_to
-                        )
-                    enriched_alerts = [enrich_alert(alert) for alert in external_alerts]
-                    self._upsert_alerts(session, enriched_alerts)
-                    checkpoint_updated = self._update_checkpoint_monotonic(
-                        session, up_to=up_to
-                    )
-
-                    finished_at = _utc_now()
-                    summary = {
-                        "alerts_received": len(external_alerts),
-                        "alerts_persisted": len(enriched_alerts),
-                        "checkpoint": _serialize_checkpoint(up_to),
-                        "checkpoint_updated": checkpoint_updated,
-                    }
-                    self._insert_execution(
-                        session=session,
-                        sync_run_id=run_id,
-                        attempt_number=attempt,
-                        retry_count=retries,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        success=True,
-                        summary=summary,
-                    )
-                    result = SyncResult(
-                        sync_run_id=run_id,
-                        attempt_number=attempt,
-                        retry_count=retries,
-                        since=since,
-                        up_to=up_to,
-                        alerts=enriched_alerts,
-                        checkpoint_updated=checkpoint_updated,
-                    )
-                except (ExternalClientError, ValueError, RuntimeError) as exc:
-                    finished_at = _utc_now()
-                    self._insert_execution(
-                        session=session,
-                        sync_run_id=run_id,
-                        attempt_number=attempt,
-                        retry_count=retries,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        success=False,
-                        error_type=type(exc).__name__,
-                        error_message=str(exc),
-                    )
-                    pending_error = exc
+                result = SyncResult(
+                    sync_run_id=run_id,
+                    attempt_number=attempt,
+                    retry_count=retries,
+                    since=since,
+                    up_to=up_to,
+                    alerts=enriched_alerts,
+                    checkpoint_updated=checkpoint_updated,
+                )
+            except (ExternalClientError, ValueError, RuntimeError) as exc:
+                finished_at = _utc_now()
+                self._insert_execution(
+                    session=session,
+                    sync_run_id=run_id,
+                    attempt_number=attempt,
+                    retry_count=retries,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    success=False,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                pending_error = exc
 
         if pending_error is not None:
             raise SyncExternalFailureError(
@@ -165,7 +168,7 @@ class SyncService:
     def _resolve_since_checkpoint(
         self, session: Session, *, reference_time: datetime
     ) -> datetime:
-        checkpoint = session.get(KeyValueState, ALERTS_SINCE_CHECKPOINT_KEY)
+        checkpoint = session.get(KeyValueState, ALERTS_SINCE_KEY)
         if checkpoint is None:
             lookback = timedelta(minutes=self._settings.sync_bootstrap_lookback_minutes)
             return (reference_time - lookback).astimezone(UTC)
@@ -181,11 +184,11 @@ class SyncService:
     def _update_checkpoint_monotonic(
         self, session: Session, *, up_to: datetime
     ) -> bool:
-        checkpoint = session.get(KeyValueState, ALERTS_SINCE_CHECKPOINT_KEY)
+        checkpoint = session.get(KeyValueState, ALERTS_SINCE_KEY)
         if checkpoint is None:
             session.add(
                 KeyValueState(
-                    key=ALERTS_SINCE_CHECKPOINT_KEY, value=_serialize_checkpoint(up_to)
+                    key=ALERTS_SINCE_KEY, value=_serialize_checkpoint(up_to)
                 )
             )
             return True

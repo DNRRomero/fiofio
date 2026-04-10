@@ -8,12 +8,8 @@ import uvicorn
 
 from alert_collector.api.app import create_app
 from alert_collector.logging import configure_logging
-from alert_collector.sync import (
-    SyncExternalFailureError,
-    SyncLockUnavailableError,
-    SyncService,
-)
-from alert_collector.worker.celery_app import celery_app
+from alert_collector.worker import get_celery_app
+from alert_collector.settings import WorkerSettings
 
 app = typer.Typer(help="Alert collector command-line interface.")
 
@@ -34,6 +30,8 @@ def run_worker(
 ) -> None:
     """Run Celery worker process."""
     configure_logging(getattr(logging, log_level.upper(), logging.INFO))
+    settings = WorkerSettings()
+    celery_app = get_celery_app(settings)
     celery_app.worker_main(["worker", "--loglevel", log_level.lower()])
 
 
@@ -43,28 +41,9 @@ def run_beat(
 ) -> None:
     """Run Celery beat scheduler process."""
     configure_logging(getattr(logging, log_level.upper(), logging.INFO))
-    celery_app.worker_main(["beat", "--loglevel", log_level.lower()])
-
-
-@app.command("sync-once")
-def run_sync_once() -> None:
-    """Execute one sync run directly from CLI."""
-    configure_logging()
-    try:
-        result = SyncService().sync_alerts()
-    except SyncExternalFailureError as exc:
-        typer.echo(f"External sync failure: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    except SyncLockUnavailableError as exc:
-        typer.echo(f"Sync lock unavailable: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    payload = result.model_dump()
-    payload["sync_run_id"] = str(result.sync_run_id)
-    payload["since"] = result.since.isoformat()
-    payload["up_to"] = result.up_to.isoformat()
-    payload["alerts"] = [alert.model_dump() for alert in result.alerts]
-    typer.echo(json.dumps(payload, default=str))
+    settings = WorkerSettings()
+    celery_app = get_celery_app(settings)
+    celery_app.start(["beat", "--loglevel", log_level.lower()])
 
 
 if __name__ == "__main__":

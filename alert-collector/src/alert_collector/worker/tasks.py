@@ -7,10 +7,8 @@ from alert_collector.sync import (
     SyncLockUnavailableError,
     SyncService,
 )
-from alert_collector.worker.celery_app import celery_app
 
 
-@celery_app.task(bind=True, name="alert_collector.sync_alerts", max_retries=3)
 def sync_alerts_task(self, *, sync_run_id: str | None = None) -> dict[str, object]:  # noqa: ANN001
     """Run one sync attempt and retry on transient ingestion failures."""
     run_id = UUID(sync_run_id) if sync_run_id else uuid4()

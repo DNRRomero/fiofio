@@ -19,6 +19,7 @@ RUN groupadd --system app && useradd --system --gid app --create-home app
 
 COPY --from=builder /app /app
 
+RUN chown -R app:app /app
 USER app
 EXPOSE 8000
 

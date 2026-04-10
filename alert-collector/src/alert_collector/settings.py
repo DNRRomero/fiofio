@@ -24,14 +24,7 @@ class DatabaseSettings(_BaseSliceSettings):
     database_url: str = Field(alias="DATABASE_URL")
 
 
-class WorkerSettings(_BaseSliceSettings):
-    """Celery worker and beat settings."""
-
-    rabbit_mq: str = Field(alias="RABBIT_MQ")
-    sync_frequency_minutes: int = Field(default=15, alias="SYNC_FREQUENCY_MINUTES")
-
-
-class ExternalClientSettings(_BaseSliceSettings):
+class ExternalClientSettings(BaseSettings):
     """External alerts service integration settings."""
 
     external_service_host: str = Field(alias="EXTERNAL_SERVICE_HOST")
@@ -45,6 +38,13 @@ class ApiSettings(_BaseSliceSettings):
     cursor_hmac_secret: str = Field(
         default="dev-cursowr-secret", alias="CURSOR_HMAC_SECRET"
     )
+
+
+class WorkerSettings(_BaseSliceSettings, ExternalClientSettings):
+    """Celery worker and beat settings."""
+
+    rabbit_mq: str = Field(alias="RABBIT_MQ")
+    sync_frequency_minutes: int = Field(default=15, alias="SYNC_FREQUENCY_MINUTES")
 
 
 class SyncSettings(_BaseSliceSettings):
@@ -71,24 +71,6 @@ class HealthSettings(_BaseSliceSettings):
 def get_database_settings() -> DatabaseSettings:
     """Return cached database settings."""
     return DatabaseSettings()
-
-
-@lru_cache
-def get_worker_settings() -> WorkerSettings:
-    """Return cached worker settings."""
-    return WorkerSettings()
-
-
-@lru_cache
-def get_external_client_settings() -> ExternalClientSettings:
-    """Return cached external-client settings."""
-    return ExternalClientSettings()
-
-
-@lru_cache
-def get_sync_settings() -> SyncSettings:
-    """Return cached sync settings."""
-    return SyncSettings()
 
 
 @lru_cache

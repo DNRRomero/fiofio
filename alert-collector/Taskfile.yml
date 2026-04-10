@@ -5,6 +5,10 @@ vars:
   IMAGE_TAG: latest
 
 tasks:
+  setup:
+    desc: Setup development environment
+    cmds:
+      - uv sync
   lint:
     desc: Run Ruff lint checks
     cmds:

@@ -112,7 +112,7 @@ def test_get_alerts_core_behaviors(
             assert exc_info.value.status_code == expected_status_code
 
     request = route.calls[0].request
-    assert request.headers["Authorization"] == "Bearer token"
+    assert request.headers["Authorization"] == "Token token"
     assert request.headers["Accept"] == "application/json"
     assert request.url.params["since"] == "2026-04-09T10:00:00+00:00"
     assert request.url.params["up_to"] == "2026-04-09T11:00:00+00:00"

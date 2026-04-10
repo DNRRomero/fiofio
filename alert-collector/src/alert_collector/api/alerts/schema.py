@@ -2,7 +2,13 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from fastapi_pagination.cursor import CursorPage
+from fastapi_pagination.customization import (
+    CustomizedPage,
+    UseExcludedFields,
+    UseFieldsAliases,
+)
+from pydantic import BaseModel
 
 
 class AlertResponse(BaseModel):
@@ -19,17 +25,8 @@ class AlertResponse(BaseModel):
     ingested_at: datetime
 
 
-class AlertsPageResponse(BaseModel):
-    """Cursor-paginated alerts response."""
-
-    alerts: list[AlertResponse]
-    next_cursor: str | None = Field(
-        default=None, description="Opaque token for fetching the next page."
-    )
-    previous_cursor: str | None = Field(
-        default=None, description="Opaque token for fetching the previous page."
-    )
-    next: str | None = Field(default=None, description="Absolute next-page URL.")
-    previous: str | None = Field(
-        default=None, description="Absolute previous-page URL."
-    )
+AlertsCursorPage = CustomizedPage[
+    CursorPage[AlertResponse],
+    UseFieldsAliases(items="alerts"),
+    UseExcludedFields("current_page", "current_page_backwards"),
+]

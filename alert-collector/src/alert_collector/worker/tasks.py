@@ -5,10 +5,9 @@ from uuid import UUID, uuid4
 from alert_collector.sync import (
     SyncExternalFailureError,
     SyncLockUnavailableError,
-    SyncService,
+    initialize_sync_service,
 )
 from alert_collector.settings import WorkerSettings
-from alert_collector.external_client import ExternalAlertsClient
 import structlog
 
 logger = structlog.get_logger()
@@ -20,12 +19,9 @@ def sync_alerts_task(self, *, sync_run_id: str | None = None) -> dict[str, objec
     run_id = UUID(sync_run_id) if sync_run_id else uuid4()
     attempt_number = self.request.retries + 1
     settings = WorkerSettings()
-    external_client = ExternalAlertsClient(
+    service = initialize_sync_service(
         external_client_host=settings.external_service_host,
         external_client_token=settings.external_service_token,
-    )
-    service = SyncService(
-        external_client=external_client,
         sync_frequency=settings.sync_frequency_minutes,
     )
 

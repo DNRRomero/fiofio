@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, String, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alert_collector.db.base import Base
@@ -25,7 +25,6 @@ class Alert(Base):
     message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     enrichment_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     enrichment_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

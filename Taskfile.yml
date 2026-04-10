@@ -1,8 +1,168 @@
 version: "3"
 
 tasks:
+  setup:
+    desc: Bootstrap a dev-ready local environment
+    cmds:
+      - task setup_env
+      - cd alert-collector && task setup
+      - cd externalMock && task setup
+      - task compose-up CLI_ARGS='--build --wait'
+  setup_env:
+    desc: Generate local secrets and .env defaults
+    cmds:
+      - mkdir -p secrets
+      - test -f secrets/postgres_user || printf "alerts\n" > secrets/postgres_user
+      - test -f secrets/postgres_password || printf "alerts\n" > secrets/postgres_password
+      - test -f secrets/external_mock_token || printf "local-dev-token\n" > secrets/external_mock_token
+      - test -f secrets/collector_database_url || printf "postgresql+psycopg://alerts:alerts@postgres:5432/alerts\n" > secrets/collector_database_url
+      - test -f secrets/rabbitmq_user || printf "alert_collector\n" > secrets/rabbitmq_user
+      - test -f secrets/rabbitmq_password || printf "change-me-local-dev\n" > secrets/rabbitmq_password
+      - >
+        test -f secrets/rabbit_mq_url || printf
+        "amqps://alert_collector:change-me-local-dev@rabbitmq:5671/%%2Falerts\n"
+        > secrets/rabbit_mq_url
+      - ./scripts/generate-rabbitmq-certs.sh
+      - |
+        test -f .env || cat <<'EOF' > .env
+        LOG_LEVEL=INFO
+        EXTERNAL_MOCK_TOKEN=local-dev-token
+        MOCK_ERROR_PROBABILITY=0.2
+        SYNC_FREQUENCY_MINUTES=3
+        EXTERNAL_SERVICE_HOST=http://external-mock:8000
+        EOF
+  fmt:
+    desc: Format code with Ruff
+    cmds:
+      - cd alert-collector && task fmt
+      - cd externalMock && task fmt
   test:
     desc: Run all tests in alert-collector and externalMock
     cmds:
       - cd alert-collector && task test
       - cd externalMock && task test
+
+  build:
+    desc: Build docker compose stack
+    cmds:
+      - docker compose build {{.CLI_ARGS}}
+
+  compose-up:
+    desc: Start docker compose stack
+    vars:
+    cmds:
+      - docker compose up -d {{.CLI_ARGS}}
+
+  compose-down:
+    desc: Stop and remove docker compose stack
+    cmds:
+      - docker compose down
+
+  logs:
+    desc: Follow compose logs
+    requires:
+      vars: [SERVICE]
+    cmds:
+      - docker compose logs -f --tail=200 "{{.SERVICE}}"
+
+  rotate-rabbitmq-password:
+    desc: Rotate RabbitMQ password and URL secrets
+    cmds:
+      - |
+        user="$$(tr -d '\n' < secrets/rabbitmq_user)"
+        password="$$(openssl rand -base64 24 | tr -d '\n' | tr '/+' '-_')"
+        printf "%s\n" "$$password" > secrets/rabbitmq_password
+        printf "amqps://%s:%s@rabbitmq:5671/%%2Falerts\n" "$$user" "$$password" > secrets/rabbit_mq_url
+
+  db-clear:
+    desc: Clear database data by removing compose volumes
+    cmds:
+      - docker compose down --volumes
+
+  db-shell:
+    desc: Open psql shell in postgres compose service
+    cmds:
+      - >
+        docker compose exec postgres sh -lc
+        'psql -U "$(cat /run/secrets/postgres_user)" -d alerts'
+  
+  db-query:
+    desc: Execute a query in postgres compose database
+    requires:
+      vars: [QUERY]
+    cmds:
+      - >
+        docker compose exec postgres sh -lc
+        'psql -U "$(cat /run/secrets/postgres_user)" -d alerts -c "{{.QUERY}}"'
+
+  db-tables:
+    desc: List tables in postgres compose database
+    cmds:
+        - task: db-query
+          vars:
+            QUERY: '\dt'
+
+  db-worker-executions:
+    desc: List most recent worker_executions rows (default LIMIT=10)
+    vars:
+      LIMIT: 10
+    cmds:
+      - >
+        docker compose exec postgres sh -lc
+        'psql -x -P pager=off -U "$(cat /run/secrets/postgres_user)" -d alerts -c
+        "SELECT
+          id,
+          sync_run_id,
+          attempt_number,
+          retry_count,
+          success,
+          started_at,
+          finished_at,
+          CASE
+            WHEN summary IS NULL THEN NULL
+            ELSE jsonb_pretty(summary::jsonb)
+          END AS summary,
+          error_type,
+          error_message,
+          created_at
+        FROM worker_executions
+        ORDER BY started_at DESC
+        LIMIT {{.LIMIT}};"'
+
+  create-user:
+    desc: Create a new API user for alert-collector
+    cmds:
+      - >
+        docker compose exec -T alert-collector-api python -m alert_collector.cli create-user
+        --email {{.EMAIL}} --password {{.PASSWORD}}
+        {{if .SUPERUSER}}--superuser{{end}}
+    requires:
+      vars: [EMAIL, PASSWORD]
+
+  get-token:
+    desc: Retrieve an auth bearer token for an existing user
+    vars:
+      BASE_URL: http://localhost:8000
+    cmds:
+      - >
+        curl -fsS -X POST "{{.BASE_URL}}/auth/login"
+        -H "Content-Type: application/x-www-form-urlencoded"
+        --data-urlencode "username={{.EMAIL}}"
+        --data-urlencode "password={{.PASSWORD}}"
+        | python -c "import json, sys; print(json.load(sys.stdin)['access_token'])"
+    requires:
+      vars: [EMAIL, PASSWORD]
+
+  get-user-and-token:
+    desc: Retrieve a user and token for an existing user
+    requires:
+      vars: [EMAIL, PASSWORD]
+    cmds:
+      - task: create-user
+        vars:
+          EMAIL: "{{.EMAIL}}"
+          PASSWORD: "{{.PASSWORD}}"
+      - task: get-token
+        vars:
+          EMAIL: "{{.EMAIL}}"
+          PASSWORD: "{{.PASSWORD}}"

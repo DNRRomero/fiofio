@@ -20,13 +20,23 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
+    command: ["/bin/sh", "/etc/rabbitmq/bootstrap.sh"]
+    volumes:
+      - ./rabbitmq/bootstrap.sh:/etc/rabbitmq/bootstrap.sh:ro
+      - ./rabbitmq/rabbitmq.conf.template:/etc/rabbitmq/rabbitmq.conf.template:ro
+    secrets:
+      - rabbitmq_user
+      - rabbitmq_password
+      - rabbitmq_ca_cert
+      - rabbitmq_server_cert
+      - rabbitmq_server_key
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - alert-collector-network
+      - broker-network
 
   external-mock:
     build:
@@ -38,6 +48,7 @@ services:
     environment:
       RNG_SEED: "42"
       FORCE_ERROR: "false"
+      ERROR_PROBABILITY: ${MOCK_ERROR_PROBABILITY}
     secrets:
       - external_mock_token
     healthcheck:
@@ -60,11 +71,11 @@ services:
       dockerfile: .docker/Dockerfile
     command: >
       sh -c "alembic upgrade head && python -m alert_collector.cli api --host 0.0.0.0 --port 8000"
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
-      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: http://external-mock:8000
+      PROMETHEUS_URL: http://prometheus:9090
       SYNC_FREQUENCY_MINUTES: "15"
       SERVICE_HOST: http://localhost:8000
     secrets:
@@ -75,8 +86,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       external-mock:
         condition: service_healthy
     healthcheck:
@@ -85,11 +94,23 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ping').read()",
         ]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - alert-collector-network
+
+  alert-collector-nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8000:8080"
+    volumes:
+      - ./alert-collector/nginx/alert-collector.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      alert-collector-api:
+        condition: service_healthy
     networks:
       - alert-collector-network
 
@@ -103,22 +124,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
       alert-collector-api:
-        condition: service_healthy
-      postgres-exporter:
-        condition: service_started
-    networks:
-      - alert-collector-network
-
-  postgres-exporter:
-    image: quay.io/prometheuscommunity/postgres-exporter:latest
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - export DATA_SOURCE_NAME="postgresql://$$(cat /run/secrets/postgres_user):$$(cat /run/secrets/postgres_password)@postgres:5432/alerts?sslmode=disable" && exec /bin/postgres_exporter
-    secrets:
-      - postgres_user
-      - postgres_password
-    depends_on:
-      postgres:
         condition: service_healthy
     networks:
       - alert-collector-network
@@ -138,7 +143,6 @@ services:
       ]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: ${EXTERNAL_SERVICE_HOST}
       SYNC_FREQUENCY_MINUTES: ${SYNC_FREQUENCY_MINUTES}
       SERVICE_HOST: http://alert-collector-api:8000
@@ -147,6 +151,9 @@ services:
         target: DATABASE_URL
       - source: external_mock_token
         target: EXTERNAL_SERVICE_TOKEN
+      - source: rabbit_mq_url
+        target: RABBIT_MQ
+      - rabbitmq_ca_cert
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +163,7 @@ services:
         condition: service_healthy
     networks:
       - alert-collector-network
+      - broker-network
 
   alert-collector-beat:
     build:
@@ -172,7 +180,6 @@ services:
       ]
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
       EXTERNAL_SERVICE_HOST: ${EXTERNAL_SERVICE_HOST}
       SYNC_FREQUENCY_MINUTES: ${SYNC_FREQUENCY_MINUTES}
       SERVICE_HOST: http://alert-collector-api:8000
@@ -181,6 +188,9 @@ services:
         target: DATABASE_URL
       - source: external_mock_token
         target: EXTERNAL_SERVICE_TOKEN
+      - source: rabbit_mq_url
+        target: RABBIT_MQ
+      - rabbitmq_ca_cert
     depends_on:
       postgres:
         condition: service_healthy
@@ -190,9 +200,11 @@ services:
         condition: service_healthy
     networks:
       - alert-collector-network
+      - broker-network
 
 networks:
   alert-collector-network:
+  broker-network:
 
 volumes:
   postgres-data:
@@ -206,3 +218,15 @@ secrets:
     file: ./secrets/external_mock_token
   collector_database_url:
     file: ./secrets/collector_database_url
+  rabbitmq_user:
+    file: ./secrets/rabbitmq_user
+  rabbitmq_password:
+    file: ./secrets/rabbitmq_password
+  rabbit_mq_url:
+    file: ./secrets/rabbit_mq_url
+  rabbitmq_ca_cert:
+    file: ./secrets/rabbitmq_ca_cert.pem
+  rabbitmq_server_cert:
+    file: ./secrets/rabbitmq_server_cert.pem
+  rabbitmq_server_key:
+    file: ./secrets/rabbitmq_server_key.pem

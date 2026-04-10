@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,31 +31,34 @@ class ExternalClientSettings(_BaseSliceSettings):
     external_service_token: str = Field(alias="EXTERNAL_SERVICE_TOKEN")
 
 
-class ApiSettings(_BaseSliceSettings):
-    """FastAPI-facing settings."""
-
-    service_host: str = Field(default="http://localhost:8000", alias="SERVICE_HOST")
-    cursor_hmac_secret: str = Field(
-        default="dev-cursowr-secret", alias="CURSOR_HMAC_SECRET"
-    )
-
-
 class SyncSettings(_BaseSliceSettings):
     """Sync orchestration settings."""
 
     sync_frequency_minutes: int = Field(default=15, alias="SYNC_FREQUENCY_MINUTES")
 
 
+class ApiSettings(ExternalClientSettings, SyncSettings):
+    """FastAPI-facing settings."""
+
+
 class WorkerSettings(ExternalClientSettings, SyncSettings):
     """Celery worker and beat settings."""
 
     rabbit_mq: str = Field(alias="RABBIT_MQ")
+    rabbit_mq_tls_ca_cert: str = Field(
+        default="/run/secrets/rabbitmq_ca_cert",
+        validation_alias=AliasChoices("RABBIT_MQ_TLS_CA_CERT", "RABBIT_MQ_CA_CERT"),
+    )
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
 
 
 class HealthSettings(_BaseSliceSettings):
     """Health evaluation threshold settings."""
 
+    prometheus_url: str = Field(alias="PROMETHEUS_URL")
+    health_recent_success_hours: int = Field(
+        default=3, alias="HEALTH_RECENT_SUCCESS_HOURS"
+    )
     health_success_stale_minutes: int = Field(
         default=30, alias="HEALTH_SUCCESS_STALE_MINUTES"
     )
@@ -69,9 +72,3 @@ class HealthSettings(_BaseSliceSettings):
 def get_database_settings() -> DatabaseSettings:
     """Return cached database settings."""
     return DatabaseSettings()
-
-
-@lru_cache
-def get_health_settings() -> HealthSettings:
-    """Return cached health settings."""
-    return HealthSettings()

@@ -5,6 +5,7 @@ from alert_collector.health.repository import (
     HealthRepository,
     WorkerExecutionRecord,
 )
+from alert_collector.health.prometheus import PrometheusHealthClient
 from alert_collector.health.service import HealthReport, HealthService, IngestionError
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "HealthRepository",
     "HealthService",
     "IngestionError",
+    "PrometheusHealthClient",
     "WorkerExecutionRecord",
 ]

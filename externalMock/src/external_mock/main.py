@@ -13,6 +13,15 @@ app = FastAPI(title="External Mock Alerts Service")
 
 logger = structlog.get_logger()
 
+
+def get_error_probability() -> float:
+    v = os.getenv("ERROR_PROBABILITY", "0.2")
+    value = float(v)
+    if value < 0 or value > 1:
+        raise ValueError("ERROR_PROBABILITY is out of range")
+    return value
+
+
 def parse_bool_env(name: str) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -55,7 +64,8 @@ def get_alerts(
         raise HTTPException(status_code=500, detail="Forced internal server error")
 
     rng = get_rng()
-    if rng.random() < 0.2:
+    err_probability = get_error_probability()
+    if rng.random() < err_probability:
         logger.info("Random internal server error")
         raise HTTPException(status_code=500, detail="Internal server error")
 

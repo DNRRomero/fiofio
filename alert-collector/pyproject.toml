@@ -16,6 +16,9 @@ dependencies = [
     "structlog>=25.4.0",
     "typer>=0.19.2",
     "uvicorn>=0.38.0",
+    "fastapi-pagination>=0.15.12",
+    "sqlakeyset>=2.0.1775222100",
+    "fastapi-users[sqlalchemy]>=15.0.5",
 ]
 
 [project.scripts]

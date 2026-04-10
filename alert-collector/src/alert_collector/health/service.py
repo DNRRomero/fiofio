@@ -1,17 +1,17 @@
 """Health status service with deterministic threshold evaluation."""
 
 from datetime import UTC, datetime, timedelta
-from math import ceil
 from uuid import UUID
 
 from pydantic import BaseModel
 
+from alert_collector.health.prometheus import PrometheusHealthClient
 from alert_collector.health.repository import (
     DatabaseProbe,
     HealthRepository,
     WorkerExecutionRecord,
 )
-from alert_collector.settings import HealthSettings, get_health_settings
+from alert_collector.settings import HealthSettings
 
 
 class IngestionError(BaseModel):
@@ -35,14 +35,6 @@ class HealthReport(BaseModel):
     recent_errors: list[IngestionError]
 
 
-def _p95(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, ceil(len(ordered) * 0.95) - 1))
-    return ordered[index]
-
-
 class HealthService:
     """Derive collector health from DB and worker execution history."""
 
@@ -50,15 +42,21 @@ class HealthService:
         self,
         *,
         repository: HealthRepository | None = None,
+        prometheus_client: PrometheusHealthClient | None = None,
         settings: HealthSettings | None = None,
     ) -> None:
+        self._settings = settings or HealthSettings()
         self._repository = repository or HealthRepository()
-        self._settings = settings or get_health_settings()
+        self._prometheus_client = prometheus_client or PrometheusHealthClient(
+            prometheus_url=self._settings.prometheus_url
+        )
 
     def evaluate(self) -> HealthReport:
         """Return overall health with ingestion diagnostics."""
         database_probe = self._repository.probe_database()
-        executions = self._repository.list_recent_executions(lookback_hours=12)
+        executions = self._repository.list_recent_executions(
+            lookback_hours=self._settings.health_recent_success_hours
+        )
         deduped = self._dedupe_by_sync_run(executions)
         now = datetime.now(tz=UTC)
 
@@ -69,12 +67,12 @@ class HealthService:
         errors_last_hour = sum(1 for item in last_hour if not item.success)
         error_rate = (errors_last_hour / total_last_hour) if total_last_hour else 0.0
 
-        latencies = [
-            (item.finished_at - item.started_at).total_seconds()
-            for item in last_hour
-            if item.success and item.finished_at >= item.started_at
-        ]
-        p95_latency = _p95(latencies)
+        prometheus_latency_available = True
+        try:
+            p95_latency = self._prometheus_client.get_external_latency_p95_last_hour()
+        except Exception:
+            prometheus_latency_available = False
+            p95_latency = 0.0
 
         last_success = max(
             (item.finished_at for item in deduped if item.success), default=None
@@ -82,23 +80,31 @@ class HealthService:
         stale_threshold = now - timedelta(
             minutes=self._settings.health_success_stale_minutes
         )
-        has_success_in_12h = last_success is not None
-        success_stale = has_success_in_12h and last_success < stale_threshold
+        has_recent_success = last_success is not None
+        success_stale = has_recent_success and last_success < stale_threshold
 
         status = "ok"
         if database_probe.status != "up":
             status = "down"
-        elif not has_success_in_12h:
+        elif not has_recent_success:
             status = "down"
         elif error_rate >= self._settings.health_error_rate_down:
             status = "down"
-        elif p95_latency >= self._settings.health_p95_down_seconds:
+        elif (
+            prometheus_latency_available
+            and p95_latency >= self._settings.health_p95_down_seconds
+        ):
             status = "down"
+        elif not prometheus_latency_available:
+            status = "degraded"
         elif success_stale:
             status = "degraded"
         elif error_rate >= self._settings.health_error_rate_warn:
             status = "degraded"
-        elif p95_latency >= self._settings.health_p95_warn_seconds:
+        elif (
+            prometheus_latency_available
+            and p95_latency >= self._settings.health_p95_warn_seconds
+        ):
             status = "degraded"
 
         recent_errors = [

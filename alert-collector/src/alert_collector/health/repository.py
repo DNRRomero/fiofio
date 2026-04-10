@@ -35,7 +35,12 @@ class WorkerExecutionRecord(BaseModel):
 class HealthRepository:
     """Read-only persistence access for health computations."""
 
-    def __init__(self, *, session_factory: sessionmaker[Session] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        session_factory: sessionmaker[Session] | None = None,
+    ) -> None:
+
         self._session_factory = session_factory or get_session_factory()
 
     def probe_database(self) -> DatabaseProbe:

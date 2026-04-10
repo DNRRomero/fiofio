@@ -22,6 +22,7 @@ from alert_collector.external_client.client import (
 )
 from alert_collector.sync.locking import acquire_transaction_lock
 import structlog
+from alert_collector.singleton import SingletonMeta
 
 ALERTS_SINCE_KEY = "alerts_since"
 
@@ -63,7 +64,7 @@ class SyncExternalFailureError(SyncServiceError):
     """Raised when external API ingestion fails."""
 
 
-class SyncService:
+class SyncService(metaclass=SingletonMeta):
     """Run alert synchronization with atomic persistence semantics."""
 
     def __init__(
@@ -209,7 +210,6 @@ class SyncService:
                 "message": excluded.message,
                 "enrichment_ip": excluded.enrichment_ip,
                 "enrichment_type": excluded.enrichment_type,
-                "raw_payload": excluded.raw_payload,
             },
         )
         session.execute(upsert_stmt)
@@ -241,3 +241,33 @@ class SyncService:
                 error_message=error_message,
             )
         )
+
+
+def initialize_sync_service(
+    *,
+    external_client_host: str,
+    external_client_token: str,
+    sync_frequency: int,
+    timeout_seconds: float = 30.0,
+    session_factory: sessionmaker[Session] | None = None,
+) -> SyncService:
+    """Initialize and return the singleton sync service instance."""
+    return SyncService(
+        session_factory=session_factory,
+        external_client=ExternalAlertsClient(
+            external_client_host=external_client_host,
+            external_client_token=external_client_token,
+            timeout_seconds=timeout_seconds,
+        ),
+        sync_frequency=sync_frequency,
+    )
+
+
+def get_sync_service() -> SyncService:
+    """Return the singleton sync service instance."""
+    instance = SyncService.get_instance()
+    if instance is None:
+        raise SyncServiceError(
+            "sync service singleton is not initialized; call initialize_sync_service first"
+        )
+    return instance

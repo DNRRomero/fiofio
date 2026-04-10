@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
@@ -11,19 +12,17 @@ from alert_collector.db.models import (
     KeyValueState,
     WorkerExecution,
 )
-from alert_collector.settings import SyncSettings
 from alert_collector.sync.locking import SyncLockUnavailableError
 from alert_collector.sync.service import SyncExternalFailureError, SyncService
 from alert_collector.sync.service import ALERTS_SINCE_KEY
 
 
 class _StubExternalAlert(BaseModel):
-    external_id: str
+    id: UUID
     created_at: datetime
     severity: str
-    alert_type: str
-    message: str | None
-    raw_payload: dict[str, object]
+    source: str
+    description: str
 
 
 class _StubExternalClient:
@@ -54,6 +53,11 @@ def session_factory() -> sessionmaker[Session]:
     )
 
 
+@pytest.fixture(autouse=True)
+def reset_sync_service_singleton() -> None:
+    SyncService._instances.pop(SyncService, None)
+
+
 def _query_checkpoint(session_factory: sessionmaker[Session]) -> KeyValueState | None:
     with session_factory() as session:
         return session.get(KeyValueState, ALERTS_SINCE_KEY)
@@ -70,17 +74,16 @@ def test_sync_success_writes_execution_and_checkpoint(
 ) -> None:
     now = datetime.now(tz=UTC)
     external_alert = _StubExternalAlert(
-        external_id="external-1",
+        id=UUID("92ca0f08-e959-4d5f-bf44-f8f077f7ef02"),
         created_at=now - timedelta(minutes=2),
         severity="high",
-        alert_type="security",
-        message="suspicious login",
-        raw_payload={"id": "external-1"},
+        source="security",
+        description="suspicious login",
     )
     service = SyncService(
         session_factory=session_factory,
         external_client=_StubExternalClient([external_alert]),
-        settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
+        sync_frequency=15,
     )
     monkeypatch.setattr(
         "alert_collector.sync.service.acquire_transaction_lock",
@@ -118,7 +121,7 @@ def test_sync_failure_keeps_checkpoint_unchanged_and_records_failed_attempt(
     service = SyncService(
         session_factory=session_factory,
         external_client=_FailingExternalClient(),
-        settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
+        sync_frequency=15,
     )
     monkeypatch.setattr(
         "alert_collector.sync.service.acquire_transaction_lock",
@@ -142,7 +145,7 @@ def test_checkpoint_update_is_monotonic(session_factory: sessionmaker[Session]) 
     service = SyncService(
         session_factory=session_factory,
         external_client=_StubExternalClient([]),
-        settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
+        sync_frequency=15,
     )
     baseline = datetime.now(tz=UTC)
 
@@ -168,7 +171,7 @@ def test_lock_failure_prevents_side_effects(
     service = SyncService(
         session_factory=session_factory,
         external_client=_StubExternalClient([]),
-        settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
+        sync_frequency=15,
     )
     monkeypatch.setattr(
         "alert_collector.sync.service.acquire_transaction_lock",

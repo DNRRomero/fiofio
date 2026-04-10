@@ -1,90 +1,169 @@
 # Alert Collector Architecture
 
-This document maps the current `alert-collector` implementation to the planned architecture and shows component interactions for the three primary use cases: `sync`, `alerts`, and `health`.
+This document maps the current `alert-collector` implementation to the running architecture and describes the main request and execution paths with sequence diagrams.
 
 ## Components
 
-- **API**: FastAPI app (`api/app.py`) exposing `/sync`, `/alerts`, `/health`.
+- **Nginx edge**: publishes the collector on port `8000` and currently forwards `/auth/*`, `/alerts`, `/sync`, and `/health`.
+- **API**: FastAPI app (`api/app.py`) exposing auth routes, `/alerts`, `/sync`, `/health`, `/metrics`, and `/ping`.
+- **Auth layer**: `fastapi-users` with database-backed bearer tokens (`auth/*`, `users/*`).
 - **Worker**: Celery task runner (`worker/tasks.py`).
 - **Beat**: Celery scheduler (`worker/scheduler.py`) enqueueing periodic sync tasks.
 - **Broker**: RabbitMQ (`RABBIT_MQ`) used by worker and beat.
-- **Sync Service**: orchestration (`sync/service.py`) with advisory lock (`sync/locking.py`).
-- **External Service**: upstream alerts endpoint consumed by `external_client/client.py`.
+- **Sync service**: orchestration (`sync/service.py`) with advisory lock (`sync/locking.py`).
+- **External service**: upstream mock alerts endpoint consumed by `external_client/client.py`.
 - **DB**: PostgreSQL via SQLAlchemy models/session (`db/*`), migrations in Alembic.
-- **Health Service**: status derivation (`health/service.py`) backed by repository (`health/repository.py`).
+- **Health service**: status derivation (`health/service.py`) backed by `health/repository.py`.
+- **Prometheus**: scrapes `/metrics` and provides external-call latency history to `/health`.
 
-## Sync use case
-
-### Interaction diagram
-
-```mermaid
-flowchart LR
-  Beat[Celery Beat] -->|schedule sync task| Broker[(RabbitMQ)]
-  Broker -->|deliver task| Worker[Celery Worker]
-  API[FastAPI POST /sync] -->|invoke sync_alerts| SyncService[SyncService]
-  Worker -->|invoke same sync_alerts| SyncService
-
-  SyncService -->|acquire lock| Lock[Postgres advisory lock]
-  SyncService -->|read/update alerts_since checkpoint| KV[(KeyValueState)]
-  SyncService -->|GET /alerts?since&up_to| External[External Service]
-  SyncService -->|enrich and upsert alerts| Alerts[(alerts table)]
-  SyncService -->|record success/failure attempt| Exec[(worker_executions table)]
-```
-
-### Flow notes
-
-- `POST /sync` and `sync_alerts_task` share the same orchestration path.
-- Sync execution is guarded by a transaction-scoped advisory lock.
-- Alerts, worker execution record, and checkpoint changes are committed atomically.
-- On ingestion failure, a failed execution is stored and checkpoint does not advance.
-
-## Alerts use case
-
-### Interaction diagram
+## `/sync` manual execution
 
 ```mermaid
-flowchart LR
-  Client[Client] -->|GET /alerts with filters + cursor| API[FastAPI /alerts]
-  API -->|decode/validate cursor continuity| Cursor[Pagination helpers]
-  API -->|query alerts ordered by created_at DESC, id DESC| DB[(alerts table)]
-  DB -->|page rows| API
-  API -->|encode next cursor + links| Cursor
-  API -->|AlertsPageResponse| Client
+sequenceDiagram
+    participant Client
+    participant Nginx
+    participant API as FastAPI /sync
+    participant Auth as fastapi-users
+    participant Sync as SyncService
+    participant DB as PostgreSQL
+    participant External as External Alerts API
+
+    Client->>Nginx: POST /sync + Bearer token
+    Nginx->>API: Proxy request
+    API->>Auth: Validate active user from access token
+    Auth-->>API: Authenticated user
+    API->>Sync: sync_alerts()
+    Sync->>DB: Begin transaction + advisory lock
+    Sync->>DB: Read alerts_since checkpoint
+    Sync->>External: GET /alerts/?since&up_to + Token auth
+    External-->>Sync: Alerts payload
+    Sync->>Sync: Enrich alerts
+    Sync->>DB: Upsert alerts
+    Sync->>DB: Insert worker_executions row
+    Sync->>DB: Update checkpoint monotonically
+    DB-->>Sync: Commit
+    Sync-->>API: SyncResult
+    API-->>Client: 201 Created + SyncResponse
 ```
 
-### Flow notes
+### Notes
 
-- Filters are `since`, `up_to`, `severity`; pagination uses `cursor` + `limit`.
-- Cursor continuity rejects mismatched filter reuse for stable paging semantics.
-- Canonical ordering is descending by `created_at`, then `id`.
+- `POST /sync` uses the same sync orchestration as worker-triggered executions.
+- The sync window is based on the stored `alerts_since` checkpoint, or a fallback lookback derived from `SYNC_FREQUENCY_MINUTES`.
+- Success writes alerts, checkpoint state, and a `worker_executions` record in one transaction.
+- External failures are recorded as failed executions and returned as `502`; lock contention becomes `409`.
 
-## Health use case
-
-### Interaction diagram
+## Worker and scheduled executions
 
 ```mermaid
-flowchart LR
-  Client[Client] -->|GET /health| API[FastAPI /health]
-  API -->|evaluate| HealthSvc[HealthService]
-  HealthSvc -->|probe SELECT 1 + latency| Repo[HealthRepository]
-  HealthSvc -->|fetch recent executions 12h| Repo
-  Repo -->|read worker_executions| Exec[(worker_executions table)]
-  Repo -->|database probe status| DB[(PostgreSQL)]
-  HealthSvc -->|dedupe by sync_run_id + threshold rules| API
-  API -->|HealthResponse status + diagnostics| Client
+sequenceDiagram
+    participant Beat as Celery Beat
+    participant Broker as RabbitMQ
+    participant Worker as Celery Worker
+    participant Sync as SyncService
+    participant DB as PostgreSQL
+    participant External as External Alerts API
+
+    Beat->>Broker: Publish alert_collector.sync_alerts on schedule
+    Broker-->>Worker: Deliver task
+    Worker->>Sync: sync_alerts(sync_run_id, attempt_number, retry_count)
+    Sync->>DB: Begin transaction + advisory lock
+    Sync->>DB: Read checkpoint
+    Sync->>External: GET /alerts/?since&up_to
+    alt Upstream succeeds
+        External-->>Sync: Alerts payload
+        Sync->>DB: Upsert alerts
+        Sync->>DB: Insert successful worker_executions row
+        Sync->>DB: Advance checkpoint
+        DB-->>Worker: Commit
+        Worker-->>Broker: Acknowledge task
+    else Upstream fails or lock unavailable
+        External-->>Sync: Error / timeout / invalid payload
+        Sync->>DB: Insert failed worker_executions row
+        DB-->>Worker: Commit failed attempt record
+        Worker->>Broker: Retry same sync_run_id after 30s
+    end
 ```
 
-### Flow notes
+### Notes
 
-- Health status combines DB availability, success staleness, error-rate, and p95 latency.
-- Retry attempts are deduped by taking the latest attempt per `sync_run_id`.
-- Output includes DB probe fields, last successful sync, rates/latency, and recent errors.
+- Beat schedules the task every `SYNC_FREQUENCY_MINUTES` using a crontab expression.
+- Worker retries reuse the same `sync_run_id` and increment `attempt_number`.
+- Health calculations later dedupe retries by keeping the latest attempt for each `sync_run_id`.
+
+## `/alerts` retrieval
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Nginx
+    participant API as FastAPI /alerts
+    participant Auth as fastapi-users
+    participant Alerts as AlertsService
+    participant DB as PostgreSQL
+
+    Client->>Nginx: GET /alerts?since&up_to&severity&cursor&size + Bearer token
+    Nginx->>API: Proxy request
+    API->>Auth: Validate active user from access token
+    Auth-->>API: Authenticated user
+    API->>Alerts: list_alerts(filters, cursor params)
+    Alerts->>DB: SELECT alerts with filters
+    Note over Alerts,DB: Ordered by created_at DESC, id DESC
+    DB-->>Alerts: Page of rows
+    Alerts-->>API: Cursor page
+    API-->>Client: AlertsCursorPage with alerts + next_page
+```
+
+### Notes
+
+- Supported filters are `since`, `up_to`, and `severity`.
+- Pagination is cursor-based through `fastapi-pagination`/`sqlakeyset`; page size is `1..200` and defaults to `50`.
+- The API returns the page items under the `alerts` field alias.
+
+## `/health` evaluation
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Nginx
+    participant API as FastAPI /health
+    participant Auth as fastapi-users
+    participant Health as HealthService
+    participant Repo as HealthRepository
+    participant DB as PostgreSQL
+    participant Prometheus
+
+    Client->>Nginx: GET /health + Bearer token
+    Nginx->>API: Proxy request
+    API->>Auth: Validate active user from access token
+    Auth-->>API: Authenticated user
+    API->>Health: evaluate()
+    Health->>Repo: probe_database()
+    Repo->>DB: SELECT 1
+    DB-->>Repo: Probe result + latency
+    Health->>Repo: list_recent_executions(3h)
+    Repo->>DB: Read worker_executions rows
+    DB-->>Repo: Recent execution history
+    Health->>Repo: get_external_latency_p95_last_hour()
+    Repo->>Prometheus: Query histogram_quantile over /metrics data
+    Prometheus-->>Repo: p95 external latency
+    Repo-->>Health: Probe + execution records + latency metric
+    Health->>Health: Dedupe by sync_run_id and apply thresholds
+    Health-->>API: HealthReport
+    API-->>Client: status, DB health, last success, error rate, p95, recent errors
+```
+
+### Notes
+
+- Status is derived from DB availability, a successful sync in the last 3 hours, last successful sync freshness, error rate, and p95 external latency from Prometheus.
+- Retry attempts are deduped by taking the latest execution for each `sync_run_id`.
+- `recent_errors` returns the most recent failed deduped executions.
 
 ## Configuration touchpoints
 
 Settings are centralized in `alert-collector/src/alert_collector/settings.py`.
 
-- Infra: `DATABASE_URL`, `RABBIT_MQ`.
-- External ingest: `EXTERNAL_SERVICE_HOST`, `EXTERNAL_SERVICE_TOKEN`.
-- Scheduler/API: `SYNC_FREQUENCY_MINUTES`, `SERVICE_HOST`.
-- Optional behavior tuning: `SYNC_BOOTSTRAP_LOOKBACK_MINUTES` and health threshold env vars.
+- Infra: `DATABASE_URL`, `RABBIT_MQ`, `RABBIT_MQ_TLS_CA_CERT`
+- External ingest: `EXTERNAL_SERVICE_HOST`, `EXTERNAL_SERVICE_TOKEN`
+- Scheduler/API: `SYNC_FREQUENCY_MINUTES`, `SERVICE_HOST`
+- Optional health tuning: `PROMETHEUS_URL`, `HEALTH_RECENT_SUCCESS_HOURS`, `HEALTH_SUCCESS_STALE_MINUTES`, `HEALTH_ERROR_RATE_WARN`, `HEALTH_ERROR_RATE_DOWN`, `HEALTH_P95_WARN_SECONDS`, `HEALTH_P95_DOWN_SECONDS`

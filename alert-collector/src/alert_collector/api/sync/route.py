@@ -1,21 +1,23 @@
 """Route for sync endpoint."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from alert_collector.api.sync.schema import SyncedAlertResponse, SyncResponse
+from alert_collector.auth import current_active_user
+from alert_collector.db.models.user import User
 from alert_collector.sync import (
     SyncExternalFailureError,
     SyncLockUnavailableError,
-    SyncService,
+    get_sync_service,
 )
 
 router = APIRouter(tags=["sync"])
 
 
 @router.post("/sync", response_model=SyncResponse, status_code=status.HTTP_201_CREATED)
-def trigger_sync() -> SyncResponse:
+def trigger_sync(_user: User = Depends(current_active_user)) -> SyncResponse:
     """Run the same sync action used by worker tasks."""
-    service = SyncService()
+    service = get_sync_service()
     try:
         result = service.sync_alerts()
     except SyncExternalFailureError as exc:

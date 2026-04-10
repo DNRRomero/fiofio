@@ -14,6 +14,7 @@ from external_mock.main import app
 def default_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RNG_SEED", raising=False)
     monkeypatch.delenv("FORCE_ERROR", raising=False)
+    monkeypatch.delenv("ERROR_PROBABILITY", raising=False)
     monkeypatch.setenv("ACCEPTED_TOKEN", "external-mock-token")
 
 
@@ -55,13 +56,20 @@ def test_alerts_envelope_and_schema(client: TestClient) -> None:
 def test_source_filtering(client: TestClient) -> None:
     response = client.get(
         "/alerts/",
-        params={"source": ','.join([Source.AWS_GUARDDUTY.value, Source.CLOUDFLARE_WAF.value])},
+        params={
+            "source": ",".join(
+                [Source.AWS_GUARDDUTY.value, Source.CLOUDFLARE_WAF.value]
+            )
+        },
         headers=auth_headers(),
     )
     assert response.status_code == 200
     alerts = response.json()["alerts"]
     for alert in alerts:
-        assert alert["source"] in [Source.AWS_GUARDDUTY.value, Source.CLOUDFLARE_WAF.value]
+        assert alert["source"] in [
+            Source.AWS_GUARDDUTY.value,
+            Source.CLOUDFLARE_WAF.value,
+        ]
 
 
 @pytest.mark.parametrize(
@@ -146,11 +154,15 @@ def test_validation_runs_before_forced_error(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FORCE_ERROR", "true")
-    response = client.get("/alerts/", params={"source": "invalid"}, headers=auth_headers())
+    response = client.get(
+        "/alerts/", params={"source": "invalid"}, headers=auth_headers()
+    )
     assert response.status_code == 422
 
 
-def test_alerts_returns_401_when_authorization_header_missing(client: TestClient) -> None:
+def test_alerts_returns_401_when_authorization_header_missing(
+    client: TestClient,
+) -> None:
     response = client.get("/alerts/")
     assert response.status_code == 401
 

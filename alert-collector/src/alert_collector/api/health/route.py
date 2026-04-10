@@ -1,21 +1,25 @@
 """Route for health endpoint."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from alert_collector.api.health.schema import (
     DatabaseHealthResponse,
     HealthResponse,
     IngestionErrorResponse,
 )
+from alert_collector.auth import current_active_user
+from alert_collector.db.models.user import User
 from alert_collector.health import HealthService
+from alert_collector.settings import HealthSettings
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
-def get_health() -> HealthResponse:
+def get_health(_user: User = Depends(current_active_user)) -> HealthResponse:
     """Return collector health status and diagnostics."""
-    report = HealthService().evaluate()
+    settings = HealthSettings()
+    report = HealthService(settings=settings).evaluate()
     return HealthResponse(
         status=report.status,
         database=DatabaseHealthResponse(

@@ -7,7 +7,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from alert_collector.api.app import create_app
 from alert_collector.db.base import Base
 from alert_collector.db.models import Alert
 
@@ -46,17 +45,15 @@ def _seed_alerts(session_factory: sessionmaker[Session], now: datetime) -> None:
                     message="one",
                     enrichment_ip="10.0.0.1",
                     enrichment_type="random_ipv4",
-                    raw_payload={"id": "a-1"},
                 ),
                 Alert(
                     external_id="a-2",
-                    created_at=now - timedelta(minutes=2),
+                    created_at=now - timedelta(minutes=1),
                     severity="high",
                     alert_type="security",
                     message="two",
                     enrichment_ip="10.0.0.2",
                     enrichment_type="random_ipv4",
-                    raw_payload={"id": "a-2"},
                 ),
                 Alert(
                     external_id="a-3",
@@ -66,14 +63,13 @@ def _seed_alerts(session_factory: sessionmaker[Session], now: datetime) -> None:
                     message="three",
                     enrichment_ip="10.0.0.3",
                     enrichment_type="random_ipv4",
-                    raw_payload={"id": "a-3"},
                 ),
             ]
         )
         session.commit()
 
 
-def test_cursor_rejects_filter_mismatch(monkeypatch) -> None:
+def test_cursor_orders_by_created_at_then_id(client: TestClient, monkeypatch) -> None:
     session_factory = _make_session_factory()
     now = datetime.now(tz=UTC)
     _seed_alerts(session_factory, now)
@@ -83,20 +79,23 @@ def test_cursor_rejects_filter_mismatch(monkeypatch) -> None:
         lambda: _session_scope(session_factory),
     )
 
-    client = TestClient(create_app())
-    first = client.get("/alerts", params={"severity": "high", "limit": 1})
+    first = client.get("/alerts", params={"size": 2})
     assert first.status_code == 200
-    cursor = first.json()["next_cursor"]
+    first_payload = first.json()
+    assert "current_page" not in first_payload
+    assert "current_page_backwards" not in first_payload
+    assert [item["external_id"] for item in first_payload["alerts"]] == ["a-2", "a-1"]
+    cursor = first_payload["next_page"]
     assert cursor
 
-    second = client.get(
-        "/alerts", params={"severity": "low", "limit": 1, "cursor": cursor}
-    )
-    assert second.status_code == 422
-    assert second.json()["detail"] == "cursor does not match current query filters"
+    second = client.get("/alerts", params={"size": 2, "cursor": cursor})
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert [item["external_id"] for item in second_payload["alerts"]] == ["a-3"]
+    assert second_payload["next_page"] is None
 
 
-def test_cursor_allows_same_filter_continuation(monkeypatch) -> None:
+def test_cursor_does_not_bind_query_filters(client: TestClient, monkeypatch) -> None:
     session_factory = _make_session_factory()
     now = datetime.now(tz=UTC)
     _seed_alerts(session_factory, now)
@@ -106,22 +105,21 @@ def test_cursor_allows_same_filter_continuation(monkeypatch) -> None:
         lambda: _session_scope(session_factory),
     )
 
-    client = TestClient(create_app())
-    params = {"severity": "high", "limit": 1}
+    params = {"severity": "high", "size": 1}
     first = client.get("/alerts", params=params)
     assert first.status_code == 200
 
-    cursor = first.json()["next_cursor"]
+    cursor = first.json()["next_page"]
     assert cursor
 
     second = client.get(
-        "/alerts", params={"severity": "high", "limit": 1, "cursor": cursor}
+        "/alerts", params={"severity": "low", "size": 1, "cursor": cursor}
     )
     assert second.status_code == 200
-    assert len(second.json()["alerts"]) == 1
+    assert len(second.json()["alerts"]) <= 1
 
 
-def test_cursor_rejects_tampered_token(monkeypatch) -> None:
+def test_cursor_rejects_invalid_shape(client: TestClient, monkeypatch) -> None:
     session_factory = _make_session_factory()
     now = datetime.now(tz=UTC)
     _seed_alerts(session_factory, now)
@@ -131,15 +129,8 @@ def test_cursor_rejects_tampered_token(monkeypatch) -> None:
         lambda: _session_scope(session_factory),
     )
 
-    client = TestClient(create_app())
-    first = client.get("/alerts", params={"severity": "high", "limit": 1})
-    assert first.status_code == 200
-    cursor = first.json()["next_cursor"]
-    assert cursor
-
-    tampered = f"{cursor[:-1]}A" if cursor[-1] != "A" else f"{cursor[:-1]}B"
-    second = client.get(
-        "/alerts", params={"severity": "high", "limit": 1, "cursor": tampered}
+    response = client.get(
+        "/alerts", params={"severity": "high", "size": 1, "cursor": "_w=="}
     )
-    assert second.status_code == 422
-    assert second.json()["detail"] == "invalid cursor token signature"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid cursor value"

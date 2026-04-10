@@ -28,7 +28,6 @@ def upgrade() -> None:
         sa.Column("message", sa.String(length=1024), nullable=True),
         sa.Column("enrichment_ip", sa.String(length=45), nullable=True),
         sa.Column("enrichment_type", sa.String(length=64), nullable=True),
-        sa.Column("raw_payload", sa.JSON(), nullable=False),
         sa.Column(
             "ingested_at",
             sa.DateTime(timezone=True),

@@ -6,6 +6,8 @@ from alert_collector.sync.service import (
     SyncResult,
     SyncService,
     SyncServiceError,
+    get_sync_service,
+    initialize_sync_service,
 )
 
 __all__ = [
@@ -14,4 +16,6 @@ __all__ = [
     "SyncResult",
     "SyncService",
     "SyncServiceError",
+    "get_sync_service",
+    "initialize_sync_service",
 ]

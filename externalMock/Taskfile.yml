@@ -1,0 +1,26 @@
+version: "3"
+
+vars:
+  IMAGE_NAME: external-mock
+  IMAGE_TAG: latest
+
+tasks:
+  lint:
+    desc: Run Ruff lint checks
+    cmds:
+      - uv run ruff check
+
+  fmt:
+    desc: Format code with Ruff
+    cmds:
+      - uv run ruff format
+
+  test:
+    desc: Run test suite
+    cmds:
+      - uv run pytest
+
+  build:
+    desc: Build Docker image from .docker/Dockerfile
+    cmds:
+      - docker build -f .docker/Dockerfile -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .

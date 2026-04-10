@@ -93,6 +93,36 @@ services:
     networks:
       - alert-collector-network
 
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      alert-collector-api:
+        condition: service_healthy
+      postgres-exporter:
+        condition: service_started
+    networks:
+      - alert-collector-network
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - export DATA_SOURCE_NAME="postgresql://$$(cat /run/secrets/postgres_user):$$(cat /run/secrets/postgres_password)@postgres:5432/alerts?sslmode=disable" && exec /bin/postgres_exporter
+    secrets:
+      - postgres_user
+      - postgres_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - alert-collector-network
+
   alert-collector-worker:
     build:
       context: ./alert-collector
@@ -109,8 +139,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
-      EXTERNAL_SERVICE_HOST: http://external-mock:8000
-      SYNC_FREQUENCY_MINUTES: "15"
+      EXTERNAL_SERVICE_HOST: ${EXTERNAL_SERVICE_HOST}
+      SYNC_FREQUENCY_MINUTES: ${SYNC_FREQUENCY_MINUTES}
       SERVICE_HOST: http://alert-collector-api:8000
     secrets:
       - source: collector_database_url
@@ -143,8 +173,8 @@ services:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
-      EXTERNAL_SERVICE_HOST: http://external-mock:8000
-      SYNC_FREQUENCY_MINUTES: "15"
+      EXTERNAL_SERVICE_HOST: ${EXTERNAL_SERVICE_HOST}
+      SYNC_FREQUENCY_MINUTES: ${SYNC_FREQUENCY_MINUTES}
       SERVICE_HOST: http://alert-collector-api:8000
     secrets:
       - source: collector_database_url

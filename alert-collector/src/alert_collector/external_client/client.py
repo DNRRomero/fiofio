@@ -6,6 +6,7 @@ import httpx
 from pydantic import ValidationError
 
 from alert_collector.external_client.schemas import ExternalAlert
+from alert_collector.metrics import track_external_alerts_call_duration
 
 
 class ExternalClientError(Exception):
@@ -38,31 +39,32 @@ class ExternalAlertsClient:
         url = f"{self.external_client_host.rstrip('/')}/alerts/"
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self.external_client_token}",
+            "Authorization": f"Token {self.external_client_token}",
         }
         params = {"since": since.isoformat(), "up_to": up_to.isoformat()}
 
-        try:
-            response = httpx.get(
-                url, params=params, headers=headers, timeout=self.timeout_seconds
-            )
-        except httpx.HTTPError as exc:
-            raise ExternalClientError("external API request failed") from exc
+        with track_external_alerts_call_duration():
+            try:
+                response = httpx.get(
+                    url, params=params, headers=headers, timeout=self.timeout_seconds
+                )
+            except httpx.HTTPError as exc:
+                raise ExternalClientError("external API request failed") from exc
 
-        if response.status_code >= 500:
-            raise ExternalClientServerError(response.status_code)
-        if response.status_code != 200:
-            raise ExternalClientError(
-                f"external API returned unexpected status {response.status_code}: {response.text}"
-            )
+            if response.status_code >= 500:
+                raise ExternalClientServerError(response.status_code)
+            if response.status_code != 200:
+                raise ExternalClientError(
+                    f"external API returned unexpected status {response.status_code}: {response.text}"
+                )
 
-        try:
-            payload = response.json()
-            raw_alerts = payload.get("alerts", [])
-            return [ExternalAlert(**item) for item in raw_alerts]
-        except ValidationError as exc:
-            raise ExternalClientError(
-                "external API returned invalid alerts payload"
-            ) from exc
-        except Exception as exc:
-            raise ExternalClientError("external API returned invalid JSON") from exc
+            try:
+                payload = response.json()
+                raw_alerts = payload.get("alerts", [])
+                return [ExternalAlert(**item) for item in raw_alerts]
+            except ValidationError as exc:
+                raise ExternalClientError(
+                    "external API returned invalid alerts payload"
+                ) from exc
+            except Exception as exc:
+                raise ExternalClientError("external API returned invalid JSON") from exc

@@ -18,7 +18,6 @@ class EnrichedAlert(BaseModel):
     severity: str
     alert_type: str
     message: str | None
-    raw_payload: dict[str, Any]
     enrichment_ip: str
     enrichment_type: str
 
@@ -31,12 +30,11 @@ def random_ipv4() -> str:
 def enrich_alert(alert: ExternalAlert) -> EnrichedAlert:
     """Enrich a single external alert with pseudo-random metadata."""
     return EnrichedAlert(
-        external_id=alert.external_id,
+        external_id=str(alert.id),
         created_at=alert.created_at,
-        severity=alert.severity,
-        alert_type=alert.alert_type,
-        message=alert.message,
-        raw_payload=alert.raw_payload,
+        severity=str(alert.severity),
+        alert_type=alert.source,
+        message=alert.description,
         enrichment_ip=random_ipv4(),
         enrichment_type="random_ipv4",
     )

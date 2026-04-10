@@ -24,7 +24,7 @@ class DatabaseSettings(_BaseSliceSettings):
     database_url: str = Field(alias="DATABASE_URL")
 
 
-class ExternalClientSettings(BaseSettings):
+class ExternalClientSettings(_BaseSliceSettings):
     """External alerts service integration settings."""
 
     external_service_host: str = Field(alias="EXTERNAL_SERVICE_HOST")
@@ -40,19 +40,17 @@ class ApiSettings(_BaseSliceSettings):
     )
 
 
-class WorkerSettings(_BaseSliceSettings, ExternalClientSettings):
-    """Celery worker and beat settings."""
-
-    rabbit_mq: str = Field(alias="RABBIT_MQ")
-    sync_frequency_minutes: int = Field(default=15, alias="SYNC_FREQUENCY_MINUTES")
-
-
 class SyncSettings(_BaseSliceSettings):
     """Sync orchestration settings."""
 
-    sync_bootstrap_lookback_minutes: int = Field(
-        default=15, alias="SYNC_BOOTSTRAP_LOOKBACK_MINUTES"
-    )
+    sync_frequency_minutes: int = Field(default=15, alias="SYNC_FREQUENCY_MINUTES")
+
+
+class WorkerSettings(ExternalClientSettings, SyncSettings):
+    """Celery worker and beat settings."""
+
+    rabbit_mq: str = Field(alias="RABBIT_MQ")
+    max_retries: int = Field(default=3, alias="MAX_RETRIES")
 
 
 class HealthSettings(_BaseSliceSettings):

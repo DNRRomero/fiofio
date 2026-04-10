@@ -1,5 +1,6 @@
 import copy
 import json
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -115,3 +116,30 @@ def test_get_alerts_core_behaviors(
     assert request.headers["Accept"] == "application/json"
     assert request.url.params["since"] == "2026-04-09T10:00:00+00:00"
     assert request.url.params["up_to"] == "2026-04-09T11:00:00+00:00"
+
+
+def test_get_alerts_tracks_external_call_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    respx_mock: respx.MockRouter,
+    client: ExternalAlertsClient,
+    external_alerts_payload: dict[str, Any],
+) -> None:
+    called = False
+
+    def _track_duration() -> Any:
+        nonlocal called
+        called = True
+        return nullcontext()
+
+    monkeypatch.setattr(
+        "alert_collector.external_client.client.track_external_alerts_call_duration",
+        _track_duration,
+    )
+    respx_mock.get(ALERTS_URL).mock(
+        return_value=httpx.Response(200, json=external_alerts_payload)
+    )
+
+    alerts = client.get_alerts(since=SINCE, up_to=UP_TO)
+
+    assert called is True
+    assert len(alerts) == len(external_alerts_payload["alerts"])

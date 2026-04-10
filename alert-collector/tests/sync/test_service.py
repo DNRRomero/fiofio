@@ -1,4 +1,3 @@
-from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -9,13 +8,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alert_collector.db.base import Base
 from alert_collector.db.models import (
-    ALERTS_SINCE_CHECKPOINT_KEY,
     KeyValueState,
     WorkerExecution,
 )
 from alert_collector.settings import SyncSettings
 from alert_collector.sync.locking import SyncLockUnavailableError
 from alert_collector.sync.service import SyncExternalFailureError, SyncService
+from alert_collector.sync.service import ALERTS_SINCE_KEY
 
 
 class _StubExternalAlert(BaseModel):
@@ -57,7 +56,7 @@ def session_factory() -> sessionmaker[Session]:
 
 def _query_checkpoint(session_factory: sessionmaker[Session]) -> KeyValueState | None:
     with session_factory() as session:
-        return session.get(KeyValueState, ALERTS_SINCE_CHECKPOINT_KEY)
+        return session.get(KeyValueState, ALERTS_SINCE_KEY)
 
 
 def _query_executions(session_factory: sessionmaker[Session]) -> list[WorkerExecution]:
@@ -88,10 +87,6 @@ def test_sync_success_writes_execution_and_checkpoint(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(service, "_upsert_alerts", lambda session, alerts: None)
-    monkeypatch.setattr(
-        "alert_collector.sync.service.track_external_alerts_call_duration",
-        lambda: nullcontext(),
-    )
 
     result = service.sync_alerts(sync_run_id=uuid4(), attempt_number=1, retry_count=0)
 
@@ -114,7 +109,7 @@ def test_sync_failure_keeps_checkpoint_unchanged_and_records_failed_attempt(
     with session_factory() as session:
         session.add(
             KeyValueState(
-                key=ALERTS_SINCE_CHECKPOINT_KEY,
+                key=ALERTS_SINCE_KEY,
                 value=seed_checkpoint.isoformat(),
             )
         )
@@ -128,10 +123,6 @@ def test_sync_failure_keeps_checkpoint_unchanged_and_records_failed_attempt(
     monkeypatch.setattr(
         "alert_collector.sync.service.acquire_transaction_lock",
         lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "alert_collector.sync.service.track_external_alerts_call_duration",
-        lambda: nullcontext(),
     )
 
     with pytest.raises(SyncExternalFailureError):
@@ -156,9 +147,7 @@ def test_checkpoint_update_is_monotonic(session_factory: sessionmaker[Session]) 
     baseline = datetime.now(tz=UTC)
 
     with session_factory() as session:
-        session.add(
-            KeyValueState(key=ALERTS_SINCE_CHECKPOINT_KEY, value=baseline.isoformat())
-        )
+        session.add(KeyValueState(key=ALERTS_SINCE_KEY, value=baseline.isoformat()))
         session.commit()
 
     with session_factory() as session:

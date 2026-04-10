@@ -10,7 +10,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from alert_collector.db.models import (
-    ALERTS_SINCE_KEY,
     Alert,
     KeyValueState,
     WorkerExecution,
@@ -21,8 +20,6 @@ from alert_collector.external_client.client import (
     ExternalAlertsClient,
     ExternalClientError,
 )
-from alert_collector.metrics import track_external_alerts_call_duration
-from alert_collector.settings import SyncSettings
 from alert_collector.sync.locking import acquire_transaction_lock
 import structlog
 
@@ -36,7 +33,7 @@ def _utc_now() -> datetime:
 
 
 def _parse_checkpoint(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
@@ -74,12 +71,11 @@ class SyncService:
         *,
         session_factory: sessionmaker[Session] | None = None,
         external_client: ExternalAlertsClient,
-        settings: SyncSettings,
+        sync_frequency: int,
     ) -> None:
         self._session_factory = session_factory or get_session_factory()
         self._external_client = external_client
-        self._settings = settings
-
+        self.sync_frequency = sync_frequency
 
     def sync_alerts(
         self,
@@ -106,10 +102,9 @@ class SyncService:
             up_to = _utc_now()
 
             try:
-                with track_external_alerts_call_duration():
-                    external_alerts = self._external_client.get_alerts(
-                        since=since, up_to=up_to
-                    )
+                external_alerts = self._external_client.get_alerts(
+                    since=since, up_to=up_to
+                )
                 enriched_alerts = [enrich_alert(alert) for alert in external_alerts]
                 self._upsert_alerts(session, enriched_alerts)
                 checkpoint_updated = self._update_checkpoint_monotonic(
@@ -170,7 +165,7 @@ class SyncService:
     ) -> datetime:
         checkpoint = session.get(KeyValueState, ALERTS_SINCE_KEY)
         if checkpoint is None:
-            lookback = timedelta(minutes=self._settings.sync_bootstrap_lookback_minutes)
+            lookback = timedelta(minutes=self.sync_frequency)
             return (reference_time - lookback).astimezone(UTC)
         return _parse_checkpoint(checkpoint.value)
 
@@ -187,9 +182,7 @@ class SyncService:
         checkpoint = session.get(KeyValueState, ALERTS_SINCE_KEY)
         if checkpoint is None:
             session.add(
-                KeyValueState(
-                    key=ALERTS_SINCE_KEY, value=_serialize_checkpoint(up_to)
-                )
+                KeyValueState(key=ALERTS_SINCE_KEY, value=_serialize_checkpoint(up_to))
             )
             return True
 

@@ -1,0 +1,152 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: alerts
+      POSTGRES_USER: alerts
+      POSTGRES_PASSWORD: alerts
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alerts -d alerts"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-collector-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-collector-network
+
+  external-mock:
+    build:
+      context: ./externalMock
+      dockerfile: .docker/Dockerfile
+    environment:
+      RNG_SEED: "42"
+      FORCE_ERROR: "false"
+      ACCEPTED_TOKEN: ${EXTERNAL_MOCK_TOKEN}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-collector-network
+
+  alert-collector-api:
+    build:
+      context: ./alert-collector
+      dockerfile: .docker/Dockerfile
+    command: >
+      sh -c "alembic upgrade head && python -m alert_collector.cli api --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
+      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
+      EXTERNAL_SERVICE_HOST: http://external-mock:8000
+      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
+      SYNC_FREQUENCY_MINUTES: "15"
+      SERVICE_HOST: http://localhost:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      external-mock:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-collector-network
+
+  alert-collector-worker:
+    build:
+      context: ./alert-collector
+      dockerfile: .docker/Dockerfile
+    command:
+      [
+        "python",
+        "-m",
+        "alert_collector.cli",
+        "worker",
+        "--log-level",
+        "${LOG_LEVEL:-INFO}",
+      ]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
+      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
+      EXTERNAL_SERVICE_HOST: http://external-mock:8000
+      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
+      SYNC_FREQUENCY_MINUTES: "15"
+      SERVICE_HOST: http://alert-collector-api:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      external-mock:
+        condition: service_healthy
+    networks:
+      - alert-collector-network
+
+  alert-collector-beat:
+    build:
+      context: ./alert-collector
+      dockerfile: .docker/Dockerfile
+    command:
+      [
+        "python",
+        "-m",
+        "alert_collector.cli",
+        "beat",
+        "--log-level",
+        "${LOG_LEVEL:-INFO}",
+      ]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://alerts:alerts@postgres:5432/alerts
+      RABBIT_MQ: amqp://guest:guest@rabbitmq:5672//
+      EXTERNAL_SERVICE_HOST: http://external-mock:8000
+      EXTERNAL_SERVICE_TOKEN: ${EXTERNAL_MOCK_TOKEN}
+      SYNC_FREQUENCY_MINUTES: "15"
+      SERVICE_HOST: http://alert-collector-api:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      external-mock:
+        condition: service_healthy
+    networks:
+      - alert-collector-network
+
+networks:
+  alert-collector-network:
+
+volumes:
+  postgres-data:

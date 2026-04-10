@@ -10,7 +10,10 @@ class _BaseSliceSettings(BaseSettings):
     """Shared pydantic-settings configuration for all slices."""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        secrets_dir="/run/secrets",
+        extra="ignore",
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -40,7 +43,7 @@ class ApiSettings(_BaseSliceSettings):
 
     service_host: str = Field(default="http://localhost:8000", alias="SERVICE_HOST")
     cursor_hmac_secret: str = Field(
-        default="dev-cursor-secret", alias="CURSOR_HMAC_SECRET"
+        default="dev-cursowr-secret", alias="CURSOR_HMAC_SECRET"
     )
 
 

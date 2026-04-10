@@ -79,7 +79,7 @@ def test_cursor_rejects_filter_mismatch(monkeypatch) -> None:
     _seed_alerts(session_factory, now)
 
     monkeypatch.setattr(
-        "alert_collector.api.alerts.route.get_session",
+        "alert_collector.api.alerts.app.get_session",
         lambda: _session_scope(session_factory),
     )
 
@@ -102,7 +102,7 @@ def test_cursor_allows_same_filter_continuation(monkeypatch) -> None:
     _seed_alerts(session_factory, now)
 
     monkeypatch.setattr(
-        "alert_collector.api.alerts.route.get_session",
+        "alert_collector.api.alerts.app.get_session",
         lambda: _session_scope(session_factory),
     )
 
@@ -127,7 +127,7 @@ def test_cursor_rejects_tampered_token(monkeypatch) -> None:
     _seed_alerts(session_factory, now)
 
     monkeypatch.setattr(
-        "alert_collector.api.alerts.route.get_session",
+        "alert_collector.api.alerts.app.get_session",
         lambda: _session_scope(session_factory),
     )
 

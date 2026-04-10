@@ -12,7 +12,8 @@ from alert_collector.api.pagination import (
     decode_cursor,
     encode_cursor,
 )
-from alert_collector.settings import get_api_settings
+
+HMAC_SECRET = "test-cursor-secret"
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -37,8 +38,8 @@ def test_encode_decode_cursor_round_trip() -> None:
     )
     payload = CursorPayload(created_at=up_to, alert_id=42, direction="next")
 
-    token = encode_cursor(payload, snapshot=snapshot)
-    decoded = decode_cursor(token, current_snapshot=snapshot)
+    token = encode_cursor(HMAC_SECRET, payload, snapshot=snapshot)
+    decoded = decode_cursor(HMAC_SECRET, token, current_snapshot=snapshot)
 
     assert decoded == payload
 
@@ -56,7 +57,7 @@ def test_decode_cursor_rejects_malformed_tokens(
     snapshot = CursorSnapshot(since=None, up_to=None, severity=None)
 
     with pytest.raises(ValueError, match=expected_error):
-        decode_cursor(token, current_snapshot=snapshot)
+        decode_cursor(HMAC_SECRET, token, current_snapshot=snapshot)
 
 
 def test_decode_cursor_rejects_invalid_signature() -> None:
@@ -64,11 +65,11 @@ def test_decode_cursor_rejects_invalid_signature() -> None:
     payload = CursorPayload(
         created_at=datetime(2026, 1, 1, tzinfo=UTC), alert_id=1, direction="next"
     )
-    token = encode_cursor(payload, snapshot=snapshot)
+    token = encode_cursor(HMAC_SECRET, payload, snapshot=snapshot)
     tampered = f"{token[:-1]}A" if token[-1] != "A" else f"{token[:-1]}B"
 
     with pytest.raises(ValueError, match="invalid cursor token signature"):
-        decode_cursor(tampered, current_snapshot=snapshot)
+        decode_cursor(HMAC_SECRET, tampered, current_snapshot=snapshot)
 
 
 def test_decode_cursor_rejects_invalid_shape() -> None:
@@ -82,11 +83,11 @@ def test_decode_cursor_rejects_invalid_shape() -> None:
             "since": None,
             "up_to": None,
         },
-        secret="test-cursor-secret",
+        secret=HMAC_SECRET,
     )
 
     with pytest.raises(ValueError, match="cursor token has invalid shape"):
-        decode_cursor(token, current_snapshot=snapshot)
+        decode_cursor(HMAC_SECRET, token, current_snapshot=snapshot)
 
 
 def test_decode_cursor_rejects_invalid_timestamp() -> None:
@@ -100,11 +101,11 @@ def test_decode_cursor_rejects_invalid_timestamp() -> None:
             "since": None,
             "up_to": None,
         },
-        secret="test-cursor-secret",
+        secret=HMAC_SECRET,
     )
 
     with pytest.raises(ValueError, match="cursor token contains invalid timestamp"):
-        decode_cursor(token, current_snapshot=snapshot)
+        decode_cursor(HMAC_SECRET, token, current_snapshot=snapshot)
 
 
 def test_decode_cursor_rejects_filter_mismatch() -> None:
@@ -114,10 +115,11 @@ def test_decode_cursor_rejects_filter_mismatch() -> None:
     payload = CursorPayload(
         created_at=datetime(2026, 1, 1, 0, 30, tzinfo=UTC), alert_id=9, direction="next"
     )
-    token = encode_cursor(payload, snapshot=snapshot)
+    token = encode_cursor(HMAC_SECRET, payload, snapshot=snapshot)
 
     with pytest.raises(ValueError, match="cursor does not match current query filters"):
         decode_cursor(
+            HMAC_SECRET,
             token,
             current_snapshot=CursorSnapshot(
                 since="2026-01-01T00:00:00+00:00", up_to=None, severity="low"

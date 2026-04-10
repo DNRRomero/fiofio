@@ -72,18 +72,17 @@ class AlertsService:
             stmt = stmt.where(Alert.severity == severity)
         if cursor_payload is not None:
             stmt = stmt.where(
-                        or_(
-                            Alert.created_at < cursor_payload.created_at,
-                            and_(
-                                Alert.created_at == cursor_payload.created_at,
-                                Alert.id < cursor_payload.alert_id,
-                            ),
-                        )
-                    )
+                or_(
+                    Alert.created_at < cursor_payload.created_at,
+                    and_(
+                        Alert.created_at == cursor_payload.created_at,
+                        Alert.id < cursor_payload.alert_id,
+                    ),
+                )
+            )
 
         stmt = stmt.order_by(Alert.created_at.desc(), Alert.id.desc()).limit(limit + 1)
         return stmt
-
 
     def list_alerts(
         self,

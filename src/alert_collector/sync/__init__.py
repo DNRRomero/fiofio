@@ -1,7 +1,12 @@
 """Sync orchestration package."""
 
 from alert_collector.sync.locking import SyncLockUnavailableError
-from alert_collector.sync.service import SyncExternalFailureError, SyncResult, SyncService, SyncServiceError
+from alert_collector.sync.service import (
+    SyncExternalFailureError,
+    SyncResult,
+    SyncService,
+    SyncServiceError,
+)
 
 __all__ = [
     "SyncExternalFailureError",
@@ -10,4 +15,3 @@ __all__ = [
     "SyncService",
     "SyncServiceError",
 ]
-

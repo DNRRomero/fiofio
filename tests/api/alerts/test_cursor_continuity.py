@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from alert_collector.api.app import create_app
-from alert_collector.api.pagination import _CURSOR_SNAPSHOT_BY_TOKEN
 from alert_collector.db.base import Base
 from alert_collector.db.models import Alert
 
@@ -21,7 +20,9 @@ def _make_session_factory() -> sessionmaker[Session]:
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    return sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
 
 
 @contextmanager
@@ -76,7 +77,6 @@ def test_cursor_rejects_filter_mismatch(monkeypatch) -> None:
     session_factory = _make_session_factory()
     now = datetime.now(tz=UTC)
     _seed_alerts(session_factory, now)
-    _CURSOR_SNAPSHOT_BY_TOKEN.clear()
 
     monkeypatch.setattr(
         "alert_collector.api.alerts.route.get_session",
@@ -89,7 +89,9 @@ def test_cursor_rejects_filter_mismatch(monkeypatch) -> None:
     cursor = first.json()["next_cursor"]
     assert cursor
 
-    second = client.get("/alerts", params={"severity": "low", "limit": 1, "cursor": cursor})
+    second = client.get(
+        "/alerts", params={"severity": "low", "limit": 1, "cursor": cursor}
+    )
     assert second.status_code == 422
     assert second.json()["detail"] == "cursor does not match current query filters"
 
@@ -98,7 +100,6 @@ def test_cursor_allows_same_filter_continuation(monkeypatch) -> None:
     session_factory = _make_session_factory()
     now = datetime.now(tz=UTC)
     _seed_alerts(session_factory, now)
-    _CURSOR_SNAPSHOT_BY_TOKEN.clear()
 
     monkeypatch.setattr(
         "alert_collector.api.alerts.route.get_session",
@@ -113,6 +114,32 @@ def test_cursor_allows_same_filter_continuation(monkeypatch) -> None:
     cursor = first.json()["next_cursor"]
     assert cursor
 
-    second = client.get("/alerts", params={"severity": "high", "limit": 1, "cursor": cursor})
+    second = client.get(
+        "/alerts", params={"severity": "high", "limit": 1, "cursor": cursor}
+    )
     assert second.status_code == 200
     assert len(second.json()["alerts"]) == 1
+
+
+def test_cursor_rejects_tampered_token(monkeypatch) -> None:
+    session_factory = _make_session_factory()
+    now = datetime.now(tz=UTC)
+    _seed_alerts(session_factory, now)
+
+    monkeypatch.setattr(
+        "alert_collector.api.alerts.route.get_session",
+        lambda: _session_scope(session_factory),
+    )
+
+    client = TestClient(create_app())
+    first = client.get("/alerts", params={"severity": "high", "limit": 1})
+    assert first.status_code == 200
+    cursor = first.json()["next_cursor"]
+    assert cursor
+
+    tampered = f"{cursor[:-1]}A" if cursor[-1] != "A" else f"{cursor[:-1]}B"
+    second = client.get(
+        "/alerts", params={"severity": "high", "limit": 1, "cursor": tampered}
+    )
+    assert second.status_code == 422
+    assert second.json()["detail"] == "invalid cursor token signature"

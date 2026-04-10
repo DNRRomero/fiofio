@@ -34,4 +34,3 @@ def track_external_alerts_call_duration() -> Iterator[None]:
         if external_alerts_call_duration_seconds is not None:
             elapsed = perf_counter() - started
             external_alerts_call_duration_seconds.labels(result=result).observe(elapsed)
-

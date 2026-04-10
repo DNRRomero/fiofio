@@ -1,16 +1,16 @@
 """Alert enrichment logic."""
 
-from dataclasses import dataclass
 from datetime import datetime
 from ipaddress import IPv4Address
 from random import randint
 from typing import Any
 
+from pydantic import BaseModel
+
 from alert_collector.external_client.schemas import ExternalAlert
 
 
-@dataclass(frozen=True, slots=True)
-class EnrichedAlert:
+class EnrichedAlert(BaseModel):
     """External alert enriched with collector-derived fields."""
 
     external_id: str
@@ -40,4 +40,3 @@ def enrich_alert(alert: ExternalAlert) -> EnrichedAlert:
         enrichment_ip=random_ipv4(),
         enrichment_type="random_ipv4",
     )
-

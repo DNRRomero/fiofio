@@ -64,9 +64,18 @@ def client() -> ExternalAlertsClient:
     ("response_builder", "expected_error", "expected_status_code"),
     [
         pytest.param(_success_response, None, None, id="success"),
-        pytest.param(_server_error_response(500), ExternalClientServerError, 500, id="5xx-500"),
-        pytest.param(_server_error_response(503), ExternalClientServerError, 503, id="5xx-503"),
-        pytest.param(_invalid_alert_field_response("id", "not-a-uuid"), ExternalClientError, None, id="invalid-payload-id"),
+        pytest.param(
+            _server_error_response(500), ExternalClientServerError, 500, id="5xx-500"
+        ),
+        pytest.param(
+            _server_error_response(503), ExternalClientServerError, 503, id="5xx-503"
+        ),
+        pytest.param(
+            _invalid_alert_field_response("id", "not-a-uuid"),
+            ExternalClientError,
+            None,
+            id="invalid-payload-id",
+        ),
         pytest.param(
             _invalid_alert_field_response("created_at", "not-a-datetime"),
             ExternalClientError,
@@ -83,11 +92,16 @@ def test_get_alerts_core_behaviors(
     expected_error: type[ExternalClientError] | None,
     expected_status_code: int | None,
 ) -> None:
-    route = respx_mock.get(ALERTS_URL).mock(return_value=response_builder(external_alerts_payload))
+    route = respx_mock.get(ALERTS_URL).mock(
+        return_value=response_builder(external_alerts_payload)
+    )
 
     if expected_error is None:
         alerts = client.get_alerts(since=SINCE, up_to=UP_TO)
-        expected_alerts = [ExternalAlert.model_validate(item) for item in external_alerts_payload["alerts"]]
+        expected_alerts = [
+            ExternalAlert.model_validate(item)
+            for item in external_alerts_payload["alerts"]
+        ]
         assert alerts == expected_alerts
     else:
         with pytest.raises(expected_error) as exc_info:

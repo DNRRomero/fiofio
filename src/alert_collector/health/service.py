@@ -1,18 +1,20 @@
 """Health status service with deterministic threshold evaluation."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import ceil
 from uuid import UUID
 
-from alert_collector.health.repository import DatabaseProbe, HealthRepository, WorkerExecutionRecord
+from pydantic import BaseModel
+
+from alert_collector.health.repository import (
+    DatabaseProbe,
+    HealthRepository,
+    WorkerExecutionRecord,
+)
 from alert_collector.settings import HealthSettings, get_health_settings
 
 
-@dataclass(frozen=True, slots=True)
-class IngestionError:
+class IngestionError(BaseModel):
     """Recent ingestion error output."""
 
     sync_run_id: UUID
@@ -22,8 +24,7 @@ class IngestionError:
     finished_at: datetime
 
 
-@dataclass(frozen=True, slots=True)
-class HealthReport:
+class HealthReport(BaseModel):
     """Structured service health output."""
 
     status: str
@@ -75,8 +76,12 @@ class HealthService:
         ]
         p95_latency = _p95(latencies)
 
-        last_success = max((item.finished_at for item in deduped if item.success), default=None)
-        stale_threshold = now - timedelta(minutes=self._settings.health_success_stale_minutes)
+        last_success = max(
+            (item.finished_at for item in deduped if item.success), default=None
+        )
+        stale_threshold = now - timedelta(
+            minutes=self._settings.health_success_stale_minutes
+        )
         has_success_in_12h = last_success is not None
         success_stale = has_success_in_12h and last_success < stale_threshold
 
@@ -118,7 +123,9 @@ class HealthService:
         )
 
     @staticmethod
-    def _dedupe_by_sync_run(executions: list[WorkerExecutionRecord]) -> list[WorkerExecutionRecord]:
+    def _dedupe_by_sync_run(
+        executions: list[WorkerExecutionRecord],
+    ) -> list[WorkerExecutionRecord]:
         latest_by_run: dict[UUID, WorkerExecutionRecord] = {}
         for item in executions:
             current = latest_by_run.get(item.sync_run_id)
@@ -128,7 +135,11 @@ class HealthService:
             if item.attempt_number > current.attempt_number:
                 latest_by_run[item.sync_run_id] = item
                 continue
-            if item.attempt_number == current.attempt_number and item.finished_at > current.finished_at:
+            if (
+                item.attempt_number == current.attempt_number
+                and item.finished_at > current.finished_at
+            ):
                 latest_by_run[item.sync_run_id] = item
-        return sorted(latest_by_run.values(), key=lambda item: item.finished_at, reverse=True)
-
+        return sorted(
+            latest_by_run.values(), key=lambda item: item.finished_at, reverse=True
+        )

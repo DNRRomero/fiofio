@@ -43,7 +43,9 @@ class ExternalAlertsClient:
         params = {"since": since.isoformat(), "up_to": up_to.isoformat()}
 
         try:
-            response = httpx.get(url, params=params, headers=headers, timeout=self.timeout_seconds)
+            response = httpx.get(
+                url, params=params, headers=headers, timeout=self.timeout_seconds
+            )
         except httpx.HTTPError as exc:
             raise ExternalClientError("external API request failed") from exc
 
@@ -56,21 +58,11 @@ class ExternalAlertsClient:
 
         try:
             payload = response.json()
-        except ValueError as exc:
-            raise ExternalClientError("external API returned invalid JSON") from exc
-
-        if isinstance(payload, dict):
             raw_alerts = payload.get("alerts", [])
-        elif isinstance(payload, list):
-            raw_alerts = payload
-        else:
-            raise ExternalClientError("external API response has unexpected shape")
-
-        if not isinstance(raw_alerts, list):
-            raise ExternalClientError("external API response alerts field is not a list")
-
-        try:
             return [ExternalAlert(**item) for item in raw_alerts]
-        except (TypeError, ValidationError) as exc:
-            raise ExternalClientError("external alert payload validation failed") from exc
-
+        except ValidationError as exc:
+            raise ExternalClientError(
+                "external API returned invalid alerts payload"
+            ) from exc
+        except Exception as exc:
+            raise ExternalClientError("external API returned invalid JSON") from exc

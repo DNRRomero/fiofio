@@ -23,7 +23,13 @@ class AlertsPageResponse(BaseModel):
     """Cursor-paginated alerts response."""
 
     alerts: list[AlertResponse]
-    next_cursor: str | None = None
-    previous_cursor: str | None = None
+    next_cursor: str | None = Field(
+        default=None, description="Opaque token for fetching the next page."
+    )
+    previous_cursor: str | None = Field(
+        default=None, description="Opaque token for fetching the previous page."
+    )
     next: str | None = Field(default=None, description="Absolute next-page URL.")
-    previous: str | None = Field(default=None, description="Absolute previous-page URL.")
+    previous: str | None = Field(
+        default=None, description="Absolute previous-page URL."
+    )

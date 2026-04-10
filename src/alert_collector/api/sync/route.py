@@ -2,8 +2,12 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from alert_collector.api.sync.schema import SyncResponse, SyncedAlertResponse
-from alert_collector.sync import SyncExternalFailureError, SyncLockUnavailableError, SyncService
+from alert_collector.api.sync.schema import SyncedAlertResponse, SyncResponse
+from alert_collector.sync import (
+    SyncExternalFailureError,
+    SyncLockUnavailableError,
+    SyncService,
+)
 
 router = APIRouter(tags=["sync"])
 
@@ -15,7 +19,9 @@ def trigger_sync() -> SyncResponse:
     try:
         result = service.sync_alerts()
     except SyncExternalFailureError as exc:
-        raise HTTPException(status_code=502, detail="failed to fetch external alerts") from exc
+        raise HTTPException(
+            status_code=502, detail="failed to fetch external alerts"
+        ) from exc
     except SyncLockUnavailableError as exc:
         raise HTTPException(status_code=409, detail="sync already in progress") from exc
 

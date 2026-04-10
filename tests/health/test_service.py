@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -11,19 +9,30 @@ from alert_collector.settings import HealthSettings
 
 
 class _StubHealthRepository:
-    def __init__(self, *, probe: DatabaseProbe, executions: list[WorkerExecutionRecord]) -> None:
+    def __init__(
+        self, *, probe: DatabaseProbe, executions: list[WorkerExecutionRecord]
+    ) -> None:
         self._probe = probe
         self._executions = executions
 
     def probe_database(self) -> DatabaseProbe:
         return self._probe
 
-    def list_recent_executions(self, *, lookback_hours: int = 12) -> list[WorkerExecutionRecord]:
+    def list_recent_executions(
+        self, *, lookback_hours: int = 12
+    ) -> list[WorkerExecutionRecord]:
         del lookback_hours
         return self._executions
 
 
-def _execution(*, success: bool, started_at: datetime, finished_at: datetime, run_id=None, attempt: int = 1) -> WorkerExecutionRecord:
+def _execution(
+    *,
+    success: bool,
+    started_at: datetime,
+    finished_at: datetime,
+    run_id=None,
+    attempt: int = 1,
+) -> WorkerExecutionRecord:
     return WorkerExecutionRecord(
         sync_run_id=run_id or uuid4(),
         attempt_number=attempt,
@@ -40,7 +49,13 @@ def test_health_status_thresholds() -> None:
     cases = [
         (
             DatabaseProbe(status="up", latency_ms=4.1, error=None),
-            [_execution(success=True, started_at=now - timedelta(minutes=5, seconds=1), finished_at=now - timedelta(minutes=5))],
+            [
+                _execution(
+                    success=True,
+                    started_at=now - timedelta(minutes=5, seconds=1),
+                    finished_at=now - timedelta(minutes=5),
+                )
+            ],
             "ok",
         ),
         (

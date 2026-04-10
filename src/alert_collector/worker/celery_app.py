@@ -16,4 +16,3 @@ celery_app.conf.update(
     beat_schedule=build_beat_schedule(settings),
     imports=("alert_collector.worker.tasks",),
 )
-

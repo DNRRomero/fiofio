@@ -1,13 +1,13 @@
 """Celery beat scheduling helpers."""
 
-from __future__ import annotations
-
 from celery.schedules import crontab
 
 from alert_collector.settings import WorkerSettings, get_worker_settings
 
 
-def build_beat_schedule(settings: WorkerSettings | None = None) -> dict[str, dict[str, object]]:
+def build_beat_schedule(
+    settings: WorkerSettings | None = None,
+) -> dict[str, dict[str, object]]:
     """Build the periodic task schedule for sync ingestion."""
     worker_settings = settings or get_worker_settings()
     frequency = max(worker_settings.sync_frequency_minutes, 1)
@@ -17,4 +17,3 @@ def build_beat_schedule(settings: WorkerSettings | None = None) -> dict[str, dic
             "schedule": crontab(minute=f"*/{frequency}"),
         }
     }
-

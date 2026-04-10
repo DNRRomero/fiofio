@@ -13,4 +13,3 @@ __all__ = [
     "get_session",
     "get_session_factory",
 ]
-

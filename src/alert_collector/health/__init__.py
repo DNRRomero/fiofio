@@ -1,6 +1,10 @@
 """Health aggregation package."""
 
-from alert_collector.health.repository import DatabaseProbe, HealthRepository, WorkerExecutionRecord
+from alert_collector.health.repository import (
+    DatabaseProbe,
+    HealthRepository,
+    WorkerExecutionRecord,
+)
 from alert_collector.health.service import HealthReport, HealthService, IngestionError
 
 __all__ = [
@@ -11,4 +15,3 @@ __all__ = [
     "IngestionError",
     "WorkerExecutionRecord",
 ]
-

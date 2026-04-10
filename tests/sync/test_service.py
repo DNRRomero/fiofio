@@ -1,23 +1,24 @@
-from __future__ import annotations
-
 from contextlib import nullcontext
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from alert_collector.db.base import Base
-from alert_collector.db.models import ALERTS_SINCE_CHECKPOINT_KEY, KeyValueState, WorkerExecution
+from alert_collector.db.models import (
+    ALERTS_SINCE_CHECKPOINT_KEY,
+    KeyValueState,
+    WorkerExecution,
+)
 from alert_collector.settings import SyncSettings
 from alert_collector.sync.locking import SyncLockUnavailableError
 from alert_collector.sync.service import SyncExternalFailureError, SyncService
 
 
-@dataclass(frozen=True, slots=True)
-class _StubExternalAlert:
+class _StubExternalAlert(BaseModel):
     external_id: str
     created_at: datetime
     severity: str
@@ -30,13 +31,17 @@ class _StubExternalClient:
     def __init__(self, alerts: list[_StubExternalAlert]) -> None:
         self._alerts = alerts
 
-    def get_alerts(self, *, since: datetime, up_to: datetime) -> list[_StubExternalAlert]:
+    def get_alerts(
+        self, *, since: datetime, up_to: datetime
+    ) -> list[_StubExternalAlert]:
         del since, up_to
         return self._alerts
 
 
 class _FailingExternalClient:
-    def get_alerts(self, *, since: datetime, up_to: datetime) -> list[_StubExternalAlert]:
+    def get_alerts(
+        self, *, since: datetime, up_to: datetime
+    ) -> list[_StubExternalAlert]:
         del since, up_to
         raise RuntimeError("upstream timeout")
 
@@ -45,7 +50,9 @@ class _FailingExternalClient:
 def session_factory() -> sessionmaker[Session]:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    return sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
 
 
 def _query_checkpoint(session_factory: sessionmaker[Session]) -> KeyValueState | None:
@@ -59,7 +66,9 @@ def _query_executions(session_factory: sessionmaker[Session]) -> list[WorkerExec
         return session.execute(stmt).scalars().all()
 
 
-def test_sync_success_writes_execution_and_checkpoint(monkeypatch: pytest.MonkeyPatch, session_factory: sessionmaker[Session]) -> None:
+def test_sync_success_writes_execution_and_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, session_factory: sessionmaker[Session]
+) -> None:
     now = datetime.now(tz=UTC)
     external_alert = _StubExternalAlert(
         external_id="external-1",
@@ -74,9 +83,15 @@ def test_sync_success_writes_execution_and_checkpoint(monkeypatch: pytest.Monkey
         external_client=_StubExternalClient([external_alert]),
         settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
     )
-    monkeypatch.setattr("alert_collector.sync.service.acquire_transaction_lock", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "alert_collector.sync.service.acquire_transaction_lock",
+        lambda *args, **kwargs: None,
+    )
     monkeypatch.setattr(service, "_upsert_alerts", lambda session, alerts: None)
-    monkeypatch.setattr("alert_collector.sync.service.track_external_alerts_call_duration", lambda: nullcontext())
+    monkeypatch.setattr(
+        "alert_collector.sync.service.track_external_alerts_call_duration",
+        lambda: nullcontext(),
+    )
 
     result = service.sync_alerts(sync_run_id=uuid4(), attempt_number=1, retry_count=0)
 
@@ -110,8 +125,14 @@ def test_sync_failure_keeps_checkpoint_unchanged_and_records_failed_attempt(
         external_client=_FailingExternalClient(),
         settings=SyncSettings(sync_bootstrap_lookback_minutes=15),
     )
-    monkeypatch.setattr("alert_collector.sync.service.acquire_transaction_lock", lambda *args, **kwargs: None)
-    monkeypatch.setattr("alert_collector.sync.service.track_external_alerts_call_duration", lambda: nullcontext())
+    monkeypatch.setattr(
+        "alert_collector.sync.service.acquire_transaction_lock",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "alert_collector.sync.service.track_external_alerts_call_duration",
+        lambda: nullcontext(),
+    )
 
     with pytest.raises(SyncExternalFailureError):
         service.sync_alerts(sync_run_id=uuid4(), attempt_number=1, retry_count=0)
@@ -135,12 +156,16 @@ def test_checkpoint_update_is_monotonic(session_factory: sessionmaker[Session]) 
     baseline = datetime.now(tz=UTC)
 
     with session_factory() as session:
-        session.add(KeyValueState(key=ALERTS_SINCE_CHECKPOINT_KEY, value=baseline.isoformat()))
+        session.add(
+            KeyValueState(key=ALERTS_SINCE_CHECKPOINT_KEY, value=baseline.isoformat())
+        )
         session.commit()
 
     with session_factory() as session:
         with session.begin():
-            updated = service._update_checkpoint_monotonic(session, up_to=baseline - timedelta(seconds=1))
+            updated = service._update_checkpoint_monotonic(
+                session, up_to=baseline - timedelta(seconds=1)
+            )
         assert updated is False
 
     checkpoint = _query_checkpoint(session_factory)
@@ -148,7 +173,9 @@ def test_checkpoint_update_is_monotonic(session_factory: sessionmaker[Session]) 
     assert checkpoint.value == baseline.isoformat()
 
 
-def test_lock_failure_prevents_side_effects(monkeypatch: pytest.MonkeyPatch, session_factory: sessionmaker[Session]) -> None:
+def test_lock_failure_prevents_side_effects(
+    monkeypatch: pytest.MonkeyPatch, session_factory: sessionmaker[Session]
+) -> None:
     service = SyncService(
         session_factory=session_factory,
         external_client=_StubExternalClient([]),
@@ -156,7 +183,9 @@ def test_lock_failure_prevents_side_effects(monkeypatch: pytest.MonkeyPatch, ses
     )
     monkeypatch.setattr(
         "alert_collector.sync.service.acquire_transaction_lock",
-        lambda *args, **kwargs: (_ for _ in ()).throw(SyncLockUnavailableError("locked")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            SyncLockUnavailableError("locked")
+        ),
     )
 
     with pytest.raises(SyncLockUnavailableError):
@@ -164,4 +193,3 @@ def test_lock_failure_prevents_side_effects(monkeypatch: pytest.MonkeyPatch, ses
 
     assert _query_checkpoint(session_factory) is None
     assert _query_executions(session_factory) == []
-

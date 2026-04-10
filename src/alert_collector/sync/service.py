@@ -1,18 +1,26 @@
 """Shared sync orchestration service."""
 
-from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel
 from sqlalchemy import Select, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
-from alert_collector.db.models import ALERTS_SINCE_CHECKPOINT_KEY, Alert, KeyValueState, WorkerExecution
+from alert_collector.db.models import (
+    ALERTS_SINCE_CHECKPOINT_KEY,
+    Alert,
+    KeyValueState,
+    WorkerExecution,
+)
 from alert_collector.db.session import get_session_factory
 from alert_collector.enrichment.service import EnrichedAlert, enrich_alert
-from alert_collector.external_client.client import ExternalAlertsClient, ExternalClientError
+from alert_collector.external_client.client import (
+    ExternalAlertsClient,
+    ExternalClientError,
+)
 from alert_collector.metrics import track_external_alerts_call_duration
 from alert_collector.settings import SyncSettings, get_sync_settings
 from alert_collector.sync.locking import acquire_transaction_lock
@@ -33,8 +41,7 @@ def _serialize_checkpoint(value: datetime) -> str:
     return value.astimezone(UTC).isoformat()
 
 
-@dataclass(frozen=True, slots=True)
-class SyncResult:
+class SyncResult(BaseModel):
     """Result of a single sync attempt."""
 
     sync_run_id: UUID
@@ -86,17 +93,25 @@ class SyncService:
             with session.begin():
                 acquire_transaction_lock(session, lock_name=lock_name)
                 attempt = attempt_number or self._next_attempt_number(session, run_id)
-                retries = retry_count if retry_count is not None else max(attempt - 1, 0)
+                retries = (
+                    retry_count if retry_count is not None else max(attempt - 1, 0)
+                )
 
-                since = self._resolve_since_checkpoint(session, reference_time=started_at)
+                since = self._resolve_since_checkpoint(
+                    session, reference_time=started_at
+                )
                 up_to = _utc_now()
 
                 try:
                     with track_external_alerts_call_duration():
-                        external_alerts = self._external_client.get_alerts(since=since, up_to=up_to)
+                        external_alerts = self._external_client.get_alerts(
+                            since=since, up_to=up_to
+                        )
                     enriched_alerts = [enrich_alert(alert) for alert in external_alerts]
                     self._upsert_alerts(session, enriched_alerts)
-                    checkpoint_updated = self._update_checkpoint_monotonic(session, up_to=up_to)
+                    checkpoint_updated = self._update_checkpoint_monotonic(
+                        session, up_to=up_to
+                    )
 
                     finished_at = _utc_now()
                     summary = {
@@ -140,12 +155,16 @@ class SyncService:
                     pending_error = exc
 
         if pending_error is not None:
-            raise SyncExternalFailureError("sync failed while ingesting external alerts") from pending_error
+            raise SyncExternalFailureError(
+                "sync failed while ingesting external alerts"
+            ) from pending_error
         if result is None:
             raise SyncServiceError("sync completed without producing a result")
         return result
 
-    def _resolve_since_checkpoint(self, session: Session, *, reference_time: datetime) -> datetime:
+    def _resolve_since_checkpoint(
+        self, session: Session, *, reference_time: datetime
+    ) -> datetime:
         checkpoint = session.get(KeyValueState, ALERTS_SINCE_CHECKPOINT_KEY)
         if checkpoint is None:
             lookback = timedelta(minutes=self._settings.sync_bootstrap_lookback_minutes)
@@ -153,16 +172,22 @@ class SyncService:
         return _parse_checkpoint(checkpoint.value)
 
     def _next_attempt_number(self, session: Session, sync_run_id: UUID) -> int:
-        stmt: Select[tuple[int | None]] = select(func.max(WorkerExecution.attempt_number)).where(
-            WorkerExecution.sync_run_id == sync_run_id
-        )
+        stmt: Select[tuple[int | None]] = select(
+            func.max(WorkerExecution.attempt_number)
+        ).where(WorkerExecution.sync_run_id == sync_run_id)
         current_max = session.execute(stmt).scalar_one_or_none()
         return 1 if current_max is None else current_max + 1
 
-    def _update_checkpoint_monotonic(self, session: Session, *, up_to: datetime) -> bool:
+    def _update_checkpoint_monotonic(
+        self, session: Session, *, up_to: datetime
+    ) -> bool:
         checkpoint = session.get(KeyValueState, ALERTS_SINCE_CHECKPOINT_KEY)
         if checkpoint is None:
-            session.add(KeyValueState(key=ALERTS_SINCE_CHECKPOINT_KEY, value=_serialize_checkpoint(up_to)))
+            session.add(
+                KeyValueState(
+                    key=ALERTS_SINCE_CHECKPOINT_KEY, value=_serialize_checkpoint(up_to)
+                )
+            )
             return True
 
         current_value = _parse_checkpoint(checkpoint.value)
@@ -176,7 +201,7 @@ class SyncService:
         if not alerts:
             return
 
-        values: list[dict[str, Any]] = [asdict(alert) for alert in alerts]
+        values: list[dict[str, Any]] = [alert.model_dump() for alert in alerts]
         stmt = pg_insert(Alert).values(values)
         excluded = stmt.excluded
         upsert_stmt = stmt.on_conflict_do_update(
@@ -220,4 +245,3 @@ class SyncService:
                 error_message=error_message,
             )
         )
-

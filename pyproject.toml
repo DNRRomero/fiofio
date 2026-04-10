@@ -23,8 +23,10 @@ alert-collector = "alert_collector.cli:app"
 
 [dependency-groups]
 dev = [
+    "isort>=8.0.1",
     "pytest>=9.0.3",
     "respx>=0.23.1",
+    "ruff>=0.15.10",
 ]
 
 [tool.pytest.ini_options]

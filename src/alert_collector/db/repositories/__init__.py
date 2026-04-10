@@ -1,2 +1,1 @@
 """Database repository package placeholder."""
-

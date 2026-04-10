@@ -2,7 +2,11 @@
 
 from uuid import UUID, uuid4
 
-from alert_collector.sync import SyncExternalFailureError, SyncLockUnavailableError, SyncService
+from alert_collector.sync import (
+    SyncExternalFailureError,
+    SyncLockUnavailableError,
+    SyncService,
+)
 from alert_collector.worker.celery_app import celery_app
 
 
@@ -20,7 +24,9 @@ def sync_alerts_task(self, *, sync_run_id: str | None = None) -> dict[str, objec
             retry_count=max(attempt_number - 1, 0),
         )
     except (SyncExternalFailureError, SyncLockUnavailableError) as exc:
-        raise self.retry(exc=exc, kwargs={"sync_run_id": str(run_id)}, countdown=30) from exc
+        raise self.retry(
+            exc=exc, kwargs={"sync_run_id": str(run_id)}, countdown=30
+        ) from exc
 
     return {
         "sync_run_id": str(result.sync_run_id),
@@ -31,4 +37,3 @@ def sync_alerts_task(self, *, sync_run_id: str | None = None) -> dict[str, objec
         "up_to": result.up_to.isoformat(),
         "checkpoint_updated": result.checkpoint_updated,
     }
-

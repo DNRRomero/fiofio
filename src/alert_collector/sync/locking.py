@@ -18,7 +18,9 @@ def advisory_lock_pair(lock_name: str) -> tuple[int, int]:
     return (first, second)
 
 
-def acquire_transaction_lock(session: Session, *, lock_name: str = "alerts_sync") -> None:
+def acquire_transaction_lock(
+    session: Session, *, lock_name: str = "alerts_sync"
+) -> None:
     """Acquire a Postgres transaction-level advisory lock for sync."""
     key_a, key_b = advisory_lock_pair(lock_name)
     row = session.execute(
@@ -27,4 +29,3 @@ def acquire_transaction_lock(session: Session, *, lock_name: str = "alerts_sync"
     ).one()
     if not bool(row.acquired):
         raise SyncLockUnavailableError(f"sync lock '{lock_name}' is already held")
-

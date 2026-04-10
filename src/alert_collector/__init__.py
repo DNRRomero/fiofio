@@ -1,0 +1,2 @@
+"""Alert collector service package."""
+

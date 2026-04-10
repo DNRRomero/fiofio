@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 
-from domain import Source
+from .domain import Source
 
 
 def parse_utc_datetime(raw_value: str, field_name: str) -> datetime:

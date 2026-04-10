@@ -34,7 +34,7 @@ services:
       dockerfile: .docker/Dockerfile
     command: >
       sh -c "export ACCEPTED_TOKEN=$(cat /run/secrets/external_mock_token) &&
-      exec uvicorn main:app --host 0.0.0.0 --port 8000"
+      exec uvicorn external_mock.main:app --app-dir /app/src --host 0.0.0.0 --port 8000"
     environment:
       RNG_SEED: "42"
       FORCE_ERROR: "false"

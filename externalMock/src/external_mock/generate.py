@@ -2,7 +2,7 @@ import random
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from domain import Alert, DESCRIPTIONS, Severity, Source
+from .domain import Alert, DESCRIPTIONS, Severity, Source
 
 
 def random_datetime_between(

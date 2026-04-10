@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from domain import Source
-from main import app
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "src"))
+from external_mock.domain import Source
+from external_mock.main import app
 
 
 @pytest.fixture(autouse=True)

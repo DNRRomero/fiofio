@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from domain import AlertsEnvelope
-from generate import generate_alerts
-from validate import parse_source_filter, resolve_window
+from .domain import AlertsEnvelope
+from .generate import generate_alerts
+from .validate import parse_source_filter, resolve_window
 
 app = FastAPI(title="External Mock Alerts Service")
 

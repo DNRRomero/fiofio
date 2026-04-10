@@ -1,0 +1,8 @@
+version: "3"
+
+tasks:
+  test:
+    desc: Run all tests in alert-collector and externalMock
+    cmds:
+      - cd alert-collector && task test
+      - cd externalMock && task test
